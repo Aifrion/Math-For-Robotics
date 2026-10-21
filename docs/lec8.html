@@ -1,0 +1,198 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Lecture 8 — Subspace Methods | Math for Robotics</title>
+<link rel="stylesheet" href="assets/site.css">
+<link rel="stylesheet" href="vendor/katex/katex.min.css">
+<script defer src="vendor/katex/katex.min.js"></script>
+<script defer src="vendor/katex/auto-render.min.js"></script>
+<script defer src="assets/site.js"></script>
+</head><body>
+<div class="layout">
+<main><div class="content">
+
+<h1>Lecture 8: Subspace Methods</h1>
+
+<div class="callout summary"><span class="tag">The one-sentence version:</span>
+an image is a point in million-dimensional space, but the images you actually meet live on a
+thin sliver of it — find that sliver (PCA), tilt it toward your labels (LDA), pair it with another
+signal (CCA), or split it into independent causes (ICA).
+<br><span class="small muted">CSE 276C, Lecture 8 · Prof. Henrik Christensen · Leonardis &amp; Bischof, "Robust recognition using eigenimages", CVIU 2000.
+All numbers verified in <code>scripts/lec8/verify.py</code>.</span></div>
+
+<div class="toc"><b>Contents</b><ol>
+<li><a href="#why">Why: recognition in clutter</a></li>
+<li><a href="#idea">The subspace idea</a></li>
+<li><a href="#pca">PCA / eigenspaces</a></li>
+<li><a href="#trick">The small-matrix trick</a></li>
+<li><a href="#recog">Recognition &amp; pose from coefficients</a></li>
+<li><a href="#lda">LDA: separation, not reconstruction</a></li>
+<li><a href="#cca">CCA: correlating two signals</a></li>
+<li><a href="#ica">ICA: independent causes</a></li>
+<li><a href="#summary">Summary</a></li>
+</ol></div>
+
+<h2 id="big">The big picture</h2>
+<p>This lecture is Lecture 2's eigen-decomposition finally paying off at scale. Every method here
+is "pick the eigenvectors of the right matrix":</p>
+<p style="text-align:center" class="small">
+<b>reconstruct best</b> → PCA (eigs of the covariance) · <b>separate classes</b> → LDA (eigs of \(S_W^{-1}S_B\)) ·
+<b>correlate two views</b> → CCA (SVD of whitened cross-covariance) · <b>independent causes</b> → ICA (beyond 2nd order)</p>
+<table>
+<tr><th>robotics problem</th><th>what you have</th><th>what you need</th><th>method</th></tr>
+<tr><td>recognize objects / faces</td><td>training images of each thing</td><td>compact, comparable descriptors</td><td>PCA (eigenimages), LDA for the decision</td></tr>
+<tr><td>pose estimation from appearance</td><td>views on a known turntable path</td><td>angle of a new view</td><td>PCA manifold + nearest point; CCA</td></tr>
+<tr><td>mobile robot localization</td><td>panoramas along a route</td><td>"where does this view sit?"</td><td>eigenspace matching</td></tr>
+<tr><td>unmix overlapping signals</td><td>sensor mixtures only</td><td>the underlying sources</td><td>ICA</td></tr>
+</table>
+
+<h2 id="why">1 · Why: recognition in clutter</h2>
+<p>"Where's the can of Coke? Is the stove off?" A fridge shelf is clutter: segmentation is hard,
+pose and expression vary, illumination changes everything (the slides show one face under 21
+lightings), and context fools even humans — the upside-down Thatcher face looks fine until you
+rotate it. The slides' answer: skip hand-built geometric models (generalized cylinders, CAD) and
+<b>learn appearance directly from images</b> — shape, reflectance, pose, and illumination all baked
+into training views, with well-defined error characteristics.</p>
+
+<h2 id="idea">2 · The subspace idea</h2>
+<p>Stack an image's pixels into a vector: a 128×128 image is a point in \(\mathbb{R}^{16384}\).
+Random points in that space are static noise — <em>real</em> images of your objects occupy a tiny
+manifold. So approximate every training image as a mix of a few basis images:</p>
+$$x_i \approx \tilde x_i = \sum_{j=0}^{k} q_j(x_i)\,u_j, \qquad U = [u_0 \dots u_k],\; k \ll n$$
+<table>
+<tr><th>symbol</th><th>meaning</th></tr>
+<tr><td>\(x_i\)</td><td>one (normalized, zero-mean) training image as a long vector</td></tr>
+<tr><td>\(u_j\)</td><td>basis images ("eigenimages") — same size as x, orthonormal</td></tr>
+<tr><td>\(q_j(x_i)\)</td><td>the few numbers that now <em>are</em> the image: its coordinates in the subspace</td></tr>
+</table>
+<p>Matching becomes cheap: comparing two images by \(\lVert x - y\rVert^2\) (or normalized
+correlation \(\rho = x^Ty / \lVert x\rVert\lVert y\rVert \ge \Theta\)) reduces to comparing their
+short coefficient vectors, \(\lVert q(x) - q(y) \rVert^2\) — distances survive the projection.</p>
+
+<h2 id="pca">3 · PCA: the best possible basis</h2>
+<p>Which basis loses least? Minimize total reconstruction error
+\(\sum_i \lVert x_i - \sum_j q_j u_j \rVert^2\). The answer (Karhunen–Loève / PCA): take the
+<b>top-k eigenvectors of the covariance</b> \(C = XX^T\):</p>
+$$C\,u_i = \lambda_i u_i, \qquad q_i = U^T(x_i - \mu), \qquad x_i = U q_i + \mu$$
+<p>and the quality is exactly accountable:</p>
+$$\text{MSE}(m \text{ components}) = \sum_{j=m+1}^{N} \lambda_j \quad\text{— the eigenvalues you dropped}$$
+
+<p class="try">🕹️ <b>Try it:</b> drag points and watch the axes, λ's and residuals react. The readout verifies MSE = dropped λ live. The <b>two clusters</b> preset shows PCA's blind spot.</p>
+<div class="demo-wrap"><iframe class="demo" src="demos/lec8/pca_explorer.html" height="560" title="PCA explorer"></iframe></div>
+
+<figure><img src="figures/lec8/01_spectrum_mse.svg" alt="Eigen-spectrum and MSE" width="820">
+<figcaption>Fig 1 — the eigen-spectrum decides everything: reconstruction error with k components equals the tail of the spectrum, verified point-by-point.</figcaption></figure>
+
+<div class="callout insight"><span class="tag">💡 Three readings of the same fact (slides):</span>
+PCA minimizes reconstruction error, maximizes projected variance, and finds the data's "natural"
+coordinate system. One eigendecomposition, three interpretations.</div>
+
+<h2 id="trick">4 · The small-matrix trick (how eigenfaces are computable at all)</h2>
+<p>For images, \(C = XX^T\) is m×m with m = #pixels — e.g. 16384×16384. But with only n images
+(n ≪ m), use the n×n <b>inner-product matrix</b> instead:</p>
+$$Q = X^TX \in \mathbb{R}^{n\times n}, \qquad Q v_i' = \lambda_i' v_i'
+\;\Rightarrow\; u_i = \frac{1}{\sqrt{\lambda_i'}}\,X v_i'$$
+<p class="small muted">Why it works: multiply \(X^TXv = \lambda v\) by X on the left and \(XX^T(Xv) = \lambda (Xv)\) — every eigenvector of Q lifts to one of C. Verified numerically: a 500×500 eigenproblem solved via an 8×8 one, eigenvector agreement |cos| = 1.0000000000.</p>
+
+<h2 id="recog">5 · Recognition and pose from coefficients</h2>
+<p>Training views taken around an object (the slides' porcelain cat on a turntable) project to a
+smooth <b>curve in eigenspace</b> — a parametric manifold indexed by pose. At runtime:
+project the new image (\(a_i = \langle x, e_i\rangle\), inner products = a least-squares fit),
+find the <b>nearest point on the manifold</b>, and that point names both the object and its pose.
+The same machinery localizes mobile robots from panoramas.</p>
+<div class="callout gotcha"><span class="tag">⚠️ Fine print (slides):</span> the coefficients need
+the <em>complete</em> image — occlusion in clutter breaks the plain inner product. That's exactly
+what the lecture's reference paper (robust eigenimages) addresses, by estimating coefficients from
+subsets of pixels.</div>
+
+<h2 id="lda">6 · LDA: separation, not reconstruction</h2>
+<p>PCA is unsupervised — it never sees labels, so its best-variance axis can be the <em>worst</em>
+axis for telling classes apart. Fisher's linear discriminant optimizes what you actually want:</p>
+$$\rho(W) = \frac{W^T S_B W}{W^T S_W W} \qquad\to\qquad S_B W = \lambda\, S_W W$$
+<table>
+<tr><th>symbol</th><th>meaning</th></tr>
+<tr><td>\(S_W = \sum_i \sum_{x\in\chi_i}(x-\mu_i)(x-\mu_i)^T\)</td><td>within-class scatter: how fat each class blob is</td></tr>
+<tr><td>\(S_B = \sum_i |\chi_i|(\mu_i - \mu)(\mu_i - \mu)^T\)</td><td>between-class scatter: how far apart the class means sit</td></tr>
+<tr><td>\(W\)</td><td>projection direction(s) — at most c−1 of them for c classes</td></tr>
+</table>
+
+<p class="try">🕹️ <b>Try it:</b> drag the class centers; PCA ignores you, LDA tracks the separation. Watch the two 1-D error readouts.</p>
+<div class="demo-wrap"><iframe class="demo" src="demos/lec8/pca_vs_lda.html" height="600" title="PCA vs LDA"></iframe></div>
+
+<figure><img src="figures/lec8/02_pca_vs_lda.svg" alt="PCA vs LDA" width="820">
+<figcaption>Fig 2 — the verified version: projecting on PCA gives 49% 1-D classification error; on LDA, 0.3%.</figcaption></figure>
+
+<div class="callout insight"><span class="tag">💡 Fisherfaces (Belhumeur et al., 1997):</span>
+for images \(S_W\) is always singular (more pixels than training images), so you can't invert it.
+The fix is a cascade: <b>PCA first</b> down to n−c dimensions, <b>then LDA</b> down to c−1:
+\(W_{opt} = W_{LDA}^T\,U_{PCA}^T\). On the classic benchmark, Fisherfaces beat eigenfaces soundly
+(the slides' chart shows ~7% vs ~24% error close-cropped) — though LDA is noise-sensitive, and the
+slides note modern large-scale systems score ~97%+.</div>
+
+<h2 id="cca">7 · CCA: correlating two sets of measurements</h2>
+<p>Supervised in a different way: given <em>paired</em> observations x (e.g. images) and y
+(e.g. pose angles), find directions \(w_x, w_y\) whose projections correlate maximally:</p>
+$$\rho = \frac{w_x^T C_{xy} w_y}{\sqrt{w_x^T C_{xx} w_x\; w_y^T C_{yy} w_y}}
+\qquad\to\qquad A w = \mu B w \;\;\text{(generalized eigenproblem)}$$
+<p>computed stably via SVD of the whitened cross-covariance:
+\(A = C_{xx}^{-1/2} C_{xy} C_{yy}^{-1/2} = UDV^T\), \(w_{xi} = C_{xx}^{-1/2}u_i\),
+\(w_{yi} = C_{yy}^{-1/2}v_i\). Properties: at most min(p, q, n) factors, affine-invariant,
+factors orthogonal in the covariance metric. Verified on a toy pair of 2-D signals sharing one
+latent variable: canonical correlations (0.93, 0.04) — it finds the shared channel and ignores the rest.</p>
+<p class="small muted">Robotics use (slides): regression tasks like pose estimation — correlate the image eigenspace with the pose parameters directly.</p>
+
+<h2 id="ica">8 · ICA: independence, not just decorrelation</h2>
+<p>PCA uses only 2nd-order statistics (covariance). ICA assumes the data are a linear mixture of
+<b>statistically independent, non-Gaussian sources</b> — the cocktail-party problem:</p>
+$$X = AS \qquad \text{given only } X,\text{ estimate both } A \text{ and } S$$
+<p>The standard recipe: whiten the data (PCA + rescaling), then rotate to maximize
+non-Gaussianity (e.g. |kurtosis|) — because by the central limit theorem, mixtures are more
+Gaussian than their ingredients. Caveats from the slides: needs non-Gaussian sources, gives no
+ordering, components aren't orthogonal.</p>
+
+<p class="try">🕹️ <b>Try it:</b> the sensors see only the orange mixtures. Slide θ — every rotation looks the same to variance, but kurtosis peaks exactly at the unmixing angle.</p>
+<div class="demo-wrap"><iframe class="demo" src="demos/lec8/ica_unmix.html" height="640" title="ICA unmixing"></iframe></div>
+
+<figure><img src="figures/lec8/03_ica_unmix.svg" alt="ICA unmixing strip" width="860">
+<figcaption>Fig 3 — sources → mixtures → recovered, |correlation| = 1.0000 both (sign and order are inherently ambiguous).</figcaption></figure>
+
+<p class="small muted">The slides' gallery: ICA on natural image patches yields localized edge filters (sparse coding — strikingly like V1 receptive fields), noise suppression, and ICA "faces" that are local features (eyes, mouths) where PCA's are global ghost-faces.</p>
+
+<h2 id="summary">9 · Summary</h2>
+<ul>
+<li>Images are points; real image sets are thin manifolds. Subspace methods find the manifold and work there.</li>
+<li>PCA: eigenvectors of the covariance; error = dropped eigenvalues; computable for images via the n×n inner-product trick.</li>
+<li>Recognition = nearest point in coefficient space; pose = position along the training manifold.</li>
+<li>The task picks the matrix: reconstruction → PCA, separation → LDA (PCA-then-LDA for images), paired regression → CCA, source separation → ICA.</li>
+<li>These are the building blocks the slides promised back in Lecture 2: eigen-decomposition as insight, now at 16384 dimensions.</li>
+</ul>
+<table>
+<tr><th>method</th><th>optimizes</th><th>supervised?</th><th>solve</th><th>use it when</th></tr>
+<tr><td>PCA</td><td>reconstruction / variance</td><td>no</td><td>eig of C (or XᵀX trick)</td><td>compression, descriptors, denoising</td></tr>
+<tr><td>LDA</td><td>between ÷ within scatter</td><td>labels</td><td>S_BW = λS_WW</td><td>classification; after PCA for images</td></tr>
+<tr><td>CCA</td><td>cross-correlation of two views</td><td>paired data</td><td>SVD of whitened C_xy</td><td>pose regression, multi-sensor</td></tr>
+<tr><td>ICA</td><td>statistical independence</td><td>no</td><td>whiten + rotate (4th order)</td><td>source separation, sparse features</td></tr>
+</table>
+
+<details><summary>⚠️ Typos in the slides to watch out for</summary><div class="body"><ul>
+<li>Slide 35: "(x_k − <b>mu</b>_i)ᵀ" → (x_k − μ_i)ᵀ (TeX escape missing).</li>
+<li>Slide 40 title "<b>Ficherfaces</b>" → Fisherfaces; headers "Linear Discrimi<b>nate</b>/Discriminative Analysis" → the standard name is Linear Discrimin<b>ant</b> Analysis.</li>
+<li>Slide 45 (CCA): "E[w_xᵀ x <b>yᵗ</b> w_y]" → yᵀ; the third expectation in the denominator should read E[w_yᵀ y yᵀ w_y].</li>
+<li>Slide 19: the basis sum runs j = 0…k while U is written with k+1 columns — off-by-one bookkeeping; harmless but don't copy indices blindly.</li>
+<li>Slide 26: "Uq_i + μ = x_i" holds only approximately when k &lt; N — it's the reconstruction \(\tilde x_i\), exact only with all components.</li>
+</ul></div></details>
+
+<details><summary>🧠 Self-check questions</summary><div class="body">
+<details><summary>1 · Your training set is 100 images of 256×256. What size eigenproblem do you actually solve, and why?</summary><div class="body">100×100 (XᵀX), not 65536×65536 (XXᵀ). Each eigenvector v of XᵀX lifts to an eigenimage u = Xv/√λ with the same eigenvalue. n images can span at most n directions, so nothing is lost.</div></details>
+<details><summary>2 · You keep components until 95% of the summed eigenvalues. What exactly did you just guarantee?</summary><div class="body">That the average reconstruction MSE is 5% of the total variance — because MSE(k) = Σ of dropped λ. It guarantees nothing about classification: a tiny-λ direction can carry all the class information (see the LDA demo).</div></details>
+<details><summary>3 · Why is S_W always singular for image data, and what's the standard fix?</summary><div class="body">rank(S_W) ≤ n − c (images minus classes), far below the pixel count, so it can't be inverted. Fisherfaces: project to n−c dims with PCA first, then run LDA there.</div></details>
+<details><summary>4 · After whitening, why can't 2nd-order statistics finish the ICA job?</summary><div class="body">Whitened data has identity covariance, and every rotation of it still does — covariance is rotation-blind. Only higher-order statistics (kurtosis, negentropy) change with the rotation and can point at the independent axes.</div></details>
+<details><summary>5 · ICA on two Gaussian sources: what happens?</summary><div class="body">Nothing useful — a rotated pair of Gaussians is still an identical pair of Gaussians, so no rotation is "more independent" than another. ICA requires non-Gaussian sources (the slides' warning), and the kurtosis curve in the demo would be flat.</div></details>
+<details><summary>6 · When would you pick CCA over plain PCA-plus-regression for pose estimation?</summary><div class="body">When the image variance is dominated by nuisance factors (lighting, background) uncorrelated with pose: PCA spends components on them, while CCA finds image directions that specifically co-vary with the pose signal.</div></details>
+</div></details>
+
+<div class="prevnext"><a href="lec7.html">← Lecture 7: Integration &amp; ODEs</a><a href="index.html">Home</a></div>
+
+</div></main>
+</div>
+</body></html>

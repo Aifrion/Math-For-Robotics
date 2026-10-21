@@ -1,0 +1,110 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ICA Unmixing</title>
+<style>
+:root{--text-primary:#1f2937;--text-secondary:#4b5563;--text-muted:#9ca3af;--text-accent:#1d4ed8;--bg-accent:#dbeafe;--border:#e5e7eb;--border-strong:#cbd5e1;--border-accent:#93c5fd;--radius:8px;--bg:#fff;--blue:#2563eb;--green:#16a34a;--amber:#BA7517;--red:#dc2626;--orange:#ea580c}
+@media (prefers-color-scheme:dark){:root{--text-primary:#e5e7eb;--text-secondary:#cbd5e1;--text-muted:#6b7280;--text-accent:#93c5fd;--bg-accent:#1e3a8a;--border:#2f2f2f;--border-strong:#4b5563;--border-accent:#3b82f6;--bg:#191919;--blue:#60a5fa;--green:#4ade80;--amber:#fbbf24;--red:#f87171;--orange:#fb923c}}
+body{margin:0;padding:12px 16px;background:var(--bg);color:var(--text-primary);font:14px/1.5 -apple-system,Segoe UI,Helvetica,Arial,sans-serif;max-width:900px}
+.row{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:6px;font-size:13px}
+.row button{font:inherit;font-size:13px;padding:4px 10px;border:0.5px solid var(--border-strong);border-radius:var(--radius);background:transparent;color:var(--text-primary);cursor:pointer}
+input[type=range]{flex:1;min-width:160px;max-width:300px}
+#cap{font-size:13px;color:var(--text-secondary);margin-top:4px;line-height:1.55}
+#out{font-size:13.5px;margin-top:6px;font-variant-numeric:tabular-nums}
+</style></head><body>
+<div class="row"><span>un-mixing rotation θ</span>
+<input type="range" id="th" min="0" max="90" step="0.5" value="0"><b id="thv"></b>
+<button id="solve">auto-solve (max |kurtosis|)</button><button id="remix">new mixing matrix</button></div>
+<svg id="sv" width="100%" viewBox="0 0 860 470"></svg>
+<div id="out"></div>
+<div id="cap"></div>
+<script>
+const sv=document.getElementById('sv');
+const css=v=>`var(--${v})`;
+const N=900;
+const tt=Array.from({length:N},(_,i)=>i/N*8);
+const s1=tt.map(t=>Math.sin(2*Math.PI*t));
+const s2=tt.map(t=>2*((t*1.37+0.2)%1)-1);
+let seed=5;
+function rnd(){seed=(seed*1103515245+12345)&0x7fffffff;return seed/0x7fffffff}
+let A,Z,theta=0,bestTh=0;
+function mixAndWhiten(){
+ A=[[0.5+rnd()*0.6,0.3+rnd()*0.5],[0.2+rnd()*0.5,-(0.4+rnd()*0.6)]];
+ const x1=s1.map((v,i)=>A[0][0]*v+A[0][1]*s2[i]);
+ const x2=s1.map((v,i)=>A[1][0]*v+A[1][1]*s2[i]);
+ const m1=x1.reduce((a,b)=>a+b)/N,m2=x2.reduce((a,b)=>a+b)/N;
+ const c1=x1.map(v=>v-m1),c2=x2.map(v=>v-m2);
+ let sxx=0,sxy=0,syy=0;
+ for(let i=0;i<N;i++){sxx+=c1[i]*c1[i];sxy+=c1[i]*c2[i];syy+=c2[i]*c2[i]}
+ sxx/=N;sxy/=N;syy/=N;
+ // eigen of 2x2 cov -> whitening matrix E D^-1/2 E^T
+ const tr=sxx+syy,det=sxx*syy-sxy*sxy;
+ const l1=tr/2+Math.sqrt(Math.max(1e-12,tr*tr/4-det)),l2=tr-l1;
+ let e1=[sxy,l1-sxx];const n1=Math.hypot(e1[0],e1[1])||1;e1=[e1[0]/n1,e1[1]/n1];
+ const e2=[-e1[1],e1[0]];
+ const a2=1/Math.sqrt(l1),b2=1/Math.sqrt(Math.max(1e-12,l2));
+ const Wm=[[a2*e1[0]*e1[0]+b2*e2[0]*e2[0],a2*e1[0]*e1[1]+b2*e2[0]*e2[1]],
+           [a2*e1[1]*e1[0]+b2*e2[1]*e2[0],a2*e1[1]*e1[1]+b2*e2[1]*e2[1]]];
+ Z=[c1.map((v,i)=>Wm[0][0]*v+Wm[0][1]*c2[i]),c1.map((v,i)=>Wm[1][0]*v+Wm[1][1]*c2[i])];
+ // precompute best theta
+ let best=-1;
+ for(let d=0;d<=360;d++){const th=d/360*Math.PI/2;
+  const v=Math.abs(kurt(rot(th)[0]))+Math.abs(kurt(rot(th)[1]));
+  if(v>best){best=v;bestTh=th}}
+ return [x1,x2]}
+function rot(th){const c=Math.cos(th),s=Math.sin(th);
+ return [Z[0].map((v,i)=>c*v+s*Z[1][i]),Z[0].map((v,i)=>-s*v+c*Z[1][i])]}
+function kurt(v){let m2=0,m4=0;for(const x of v){m2+=x*x;m4+=x*x*x*x}
+ m2/=v.length;m4/=v.length;return m4/(m2*m2)-3}
+let X1,X2;
+function strip(x0,y0,w,h,sig,col,label){
+ let mx=0;for(const v of sig)mx=Math.max(mx,Math.abs(v));mx=mx||1;
+ let d='';sig.forEach((v,i)=>{if(i%2)return;
+  d+=(d?'L':'M')+(x0+i/N*w).toFixed(1)+' '+(y0+h/2-v/mx*h*0.44).toFixed(1)});
+ return `<rect x="${x0}" y="${y0}" width="${w}" height="${h}" fill="none" stroke="var(--border)"/>`+
+  `<path d="${d}" stroke="${col}" stroke-width="1.4" fill="none"/>`+
+  (label?`<text x="${x0}" y="${y0-6}" style="font-size:12px;fill:var(--text-secondary)">${label}</text>`:'')}
+function draw(){
+ document.getElementById('thv').textContent=theta.toFixed(1)+'°';
+ const th=theta*Math.PI/180;
+ const Y=rot(th);
+ const k1=kurt(Y[0]),k2=kurt(Y[1]);
+ let s='';
+ s+=`<text x="20" y="22" style="font-size:13px;font-weight:600;fill:var(--text-primary)">sources (hidden from the algorithm)</text>`;
+ s+=strip(20,34,390,54,s1,css('green'));
+ s+=strip(20,98,390,54,s2,css('green'));
+ s+=`<text x="450" y="22" style="font-size:13px;font-weight:600;fill:var(--text-primary)">mixtures = what the sensors see</text>`;
+ s+=strip(450,34,390,54,X1,css('orange'));
+ s+=strip(450,98,390,54,X2,css('orange'));
+ s+=`<text x="20" y="196" style="font-size:13px;font-weight:600;fill:var(--text-primary)">your un-mix: whiten, then rotate by θ</text>`;
+ s+=strip(20,208,390,54,Y[0],css('blue'));
+ s+=strip(20,272,390,54,Y[1],css('blue'));
+ // kurtosis vs theta curve
+ const cx=450,cy=208,cw=390,ch=118;
+ s+=`<text x="${cx}" y="196" style="font-size:13px;font-weight:600;fill:var(--text-primary)">|kurt₁| + |kurt₂| vs θ — peak = independence</text>`;
+ s+=`<rect x="${cx}" y="${cy}" width="${cw}" height="${ch}" fill="none" stroke="var(--border)"/>`;
+ let d='',mxv=0;const vals=[];
+ for(let deg=0;deg<=90;deg+=1){const Yv=rot(deg*Math.PI/180);
+  const v=Math.abs(kurt(Yv[0]))+Math.abs(kurt(Yv[1]));vals.push(v);mxv=Math.max(mxv,v)}
+ vals.forEach((v,i)=>{d+=(i?'L':'M')+(cx+i/90*cw).toFixed(1)+' '+(cy+ch-6-v/mxv*(ch-14)).toFixed(1)});
+ s+=`<path d="${d}" stroke="${css('red')}" stroke-width="2" fill="none"/>`;
+ s+=`<path d="M${cx+theta/90*cw} ${cy}V${cy+ch}" stroke="${css('amber')}" stroke-width="2"/>`;
+ s+=`<text x="${cx}" y="${cy+ch+16}" style="font-size:11px;fill:var(--text-muted)">0°</text>`;
+ s+=`<text x="${cx+cw}" y="${cy+ch+16}" text-anchor="end" style="font-size:11px;fill:var(--text-muted)">90°</text>`;
+ // correlations to truth
+ const corr=(a,b)=>{let sab=0,sa=0,sb=0;for(let i=0;i<N;i++){sab+=a[i]*b[i];sa+=a[i]*a[i];sb+=b[i]*b[i]}
+  return Math.abs(sab/Math.sqrt(sa*sb))};
+ const cSin=Math.max(corr(Y[0],s1),corr(Y[1],s1));
+ const cSaw=Math.max(corr(Y[0],s2),corr(Y[1],s2));
+ s+=`<text x="20" y="356" style="font-size:13px;fill:var(--text-primary)">match to hidden sources: sine <tspan style="font-weight:700;fill:${cSin>0.99?css('green'):css('red')}">${cSin.toFixed(3)}</tspan> · saw <tspan style="font-weight:700;fill:${cSaw>0.99?css('green'):css('red')}">${cSaw.toFixed(3)}</tspan>  (1.000 = perfectly recovered)</text>`;
+ s+=`<text x="20" y="380" style="font-size:12.5px;fill:var(--text-secondary)">kurt(y₁) = ${k1.toFixed(3)} · kurt(y₂) = ${k2.toFixed(3)} — a Gaussian would be 0; the true sources are strongly non-Gaussian (−1.5, −1.2)</text>`;
+ sv.innerHTML=s;
+ document.getElementById('cap').textContent= Math.abs(theta*Math.PI/180-bestTh)<0.03?
+  'At the peak the outputs match the hidden sources — blind source separation with nothing but the independence assumption. Note what PCA gave you: the whitened signals at θ = 0 are still mixtures. Variance (2nd-order statistics) is blind to the rotation; kurtosis (4th-order) is not.':
+  'Whitening (PCA + rescaling) fixes variance in all directions, so every rotation of the whitened pair looks equally good to 2nd-order statistics. ICA’s extra idea: among all those rotations, pick the one whose outputs are most non-Gaussian (|kurtosis| peak) — because sums of independent signals are more Gaussian than the signals themselves. Drag θ to the red peak.'}
+document.getElementById('th').oninput=e=>{theta=+e.target.value;draw()};
+document.getElementById('solve').onclick=()=>{theta=bestTh*180/Math.PI;document.getElementById('th').value=theta;draw()};
+document.getElementById('remix').onclick=()=>{[X1,X2]=mixAndWhiten();draw()};
+[X1,X2]=mixAndWhiten();draw();
+const post=()=>parent.postMessage({demoHeight:document.body.scrollHeight+8},'*');
+addEventListener('load',post);new ResizeObserver(post).observe(document.body);
+</script></body></html>

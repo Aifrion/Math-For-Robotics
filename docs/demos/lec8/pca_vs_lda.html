@@ -1,0 +1,96 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>PCA vs LDA</title>
+<style>
+:root{--text-primary:#1f2937;--text-secondary:#4b5563;--text-muted:#9ca3af;--text-accent:#1d4ed8;--bg-accent:#dbeafe;--border:#e5e7eb;--border-strong:#cbd5e1;--border-accent:#93c5fd;--radius:8px;--bg:#fff;--blue:#2563eb;--green:#16a34a;--amber:#BA7517;--red:#dc2626;--purple:#7c3aed}
+@media (prefers-color-scheme:dark){:root{--text-primary:#e5e7eb;--text-secondary:#cbd5e1;--text-muted:#6b7280;--text-accent:#93c5fd;--bg-accent:#1e3a8a;--border:#2f2f2f;--border-strong:#4b5563;--border-accent:#3b82f6;--bg:#191919;--blue:#60a5fa;--green:#4ade80;--amber:#fbbf24;--red:#f87171;--purple:#a78bfa}}
+body{margin:0;padding:12px 16px;background:var(--bg);color:var(--text-primary);font:14px/1.5 -apple-system,Segoe UI,Helvetica,Arial,sans-serif;max-width:900px}
+#cap{font-size:13px;color:var(--text-secondary);margin-top:4px;line-height:1.55}
+.hint{font-size:12.5px;color:var(--text-muted);margin-bottom:4px}
+</style></head><body>
+<div class="hint">Drag the <b>cluster centers</b> (large dots). PCA (blue) chases total variance; Fisher's LDA (red) chases separation. The histograms show each projection's view of the classes.</div>
+<svg id="sv" width="100%" viewBox="0 0 860 460" style="touch-action:none"></svg>
+<div id="cap"></div>
+<script>
+const sv=document.getElementById('sv');
+const css=v=>`var(--${v})`;
+let mu1=[0,1.1],mu2=[0,-1.1],drag=0;
+// fixed relative scatter per class (elongated in x)
+function mulberry(seed){return()=>{seed|=0;seed=seed+0x6D2B79F5|0;let t=Math.imul(seed^seed>>>15,1|seed);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296}}
+function gauss(r){let u=0,v=0;while(!u)u=r();while(!v)v=r();return Math.sqrt(-2*Math.log(u))*Math.cos(2*Math.PI*v)}
+const r1=mulberry(11),r2=mulberry(23);
+const off1=[],off2=[];
+for(let i=0;i<70;i++){off1.push([gauss(r1)*2.0,gauss(r1)*0.42]);off2.push([gauss(r2)*2.0,gauss(r2)*0.42])}
+const L=18,T=14,W=540,H=380,RY=3.4,RX=RY*W/H;
+const X=v=>L+(v+RX)/(2*RX)*W,Y=v=>T+(RY-v)/(2*RY)*H;
+const IX=p=>(p-L)/W*2*RX-RX,IY=p=>RY-(p-T)/H*2*RY;
+function draw(){
+ const c1=off1.map(o=>[o[0]+mu1[0],o[1]+mu1[1]]),c2=off2.map(o=>[o[0]+mu2[0],o[1]+mu2[1]]);
+ const all=c1.concat(c2),n=all.length;
+ const mx=all.reduce((s,p)=>s+p[0],0)/n,my=all.reduce((s,p)=>s+p[1],0)/n;
+ let sxx=0,sxy=0,syy=0;
+ for(const p of all){const dx=p[0]-mx,dy=p[1]-my;sxx+=dx*dx;sxy+=dx*dy;syy+=dy*dy}
+ const tr=sxx+syy,det=sxx*syy-sxy*sxy;
+ const l1=tr/2+Math.sqrt(Math.max(0,tr*tr/4-det));
+ let vp=[sxy,l1-sxx];if(Math.hypot(vp[0],vp[1])<1e-9)vp=[1,0];
+ let np2=Math.hypot(vp[0],vp[1]);vp=[vp[0]/np2,vp[1]/np2];
+ // LDA: Sw from class-centered scatter, w ∝ Sw^-1 (mu1-mu2)
+ let wxx=0,wxy=0,wyy=0;
+ for(const o of off1.concat(off2)){wxx+=o[0]*o[0];wxy+=o[0]*o[1];wyy+=o[1]*o[1]}
+ const dmu=[mu1[0]-mu2[0],mu1[1]-mu2[1]];
+ const detw=wxx*wyy-wxy*wxy;
+ let w=[(wyy*dmu[0]-wxy*dmu[1])/detw,(-wxy*dmu[0]+wxx*dmu[1])/detw];
+ const nw=Math.hypot(w[0],w[1])||1;w=[w[0]/nw,w[1]/nw];
+ let s=`<rect x="${L}" y="${T}" width="${W}" height="${H}" fill="none" stroke="var(--border)" stroke-width="0.6"/>`;
+ // axes through global mean
+ const EXT=8;
+ s+=`<defs><clipPath id="cp"><rect x="${L}" y="${T}" width="${W}" height="${H}"/></clipPath></defs><g clip-path="url(#cp)">`;
+ s+=`<path d="M${X(mx-EXT*vp[0])} ${Y(my-EXT*vp[1])}L${X(mx+EXT*vp[0])} ${Y(my+EXT*vp[1])}" stroke="${css('blue')}" stroke-width="3"/>`;
+ s+=`<path d="M${X(mx-EXT*w[0])} ${Y(my-EXT*w[1])}L${X(mx+EXT*w[0])} ${Y(my+EXT*w[1])}" stroke="${css('red')}" stroke-width="3"/>`;
+ c1.forEach(p=>{s+=`<circle cx="${X(p[0])}" cy="${Y(p[1])}" r="3.2" fill="${css('green')}" opacity="0.8"/>`});
+ c2.forEach(p=>{s+=`<circle cx="${X(p[0])}" cy="${Y(p[1])}" r="3.2" fill="${css('purple')}" opacity="0.8"/>`});
+ s+=`</g>`;
+ s+=`<circle cx="${X(mu1[0])}" cy="${Y(mu1[1])}" r="10" fill="${css('green')}" stroke="var(--bg)" stroke-width="2" style="cursor:grab"/>`;
+ s+=`<circle cx="${X(mu2[0])}" cy="${Y(mu2[1])}" r="10" fill="${css('purple')}" stroke="var(--bg)" stroke-width="2" style="cursor:grab"/>`;
+ // labels at line ends (clipped area edge)
+ s+=`<text x="${X(mx)+10}" y="${Y(my)-H/2+26}" style="font-size:12px;font-weight:600;fill:${css('red')}"></text>`;
+ // histograms
+ const histo=(d,x0,title,col)=>{
+  const p1=c1.map(p=>p[0]*d[0]+p[1]*d[1]),p2=c2.map(p=>p[0]*d[0]+p[1]*d[1]);
+  const lo=Math.min(...p1,...p2),hi=Math.max(...p1,...p2)+1e-9;
+  const B=16,h1=new Array(B).fill(0),h2=new Array(B).fill(0);
+  p1.forEach(v=>h1[Math.min(B-1,Math.floor((v-lo)/(hi-lo)*B))]++);
+  p2.forEach(v=>h2[Math.min(B-1,Math.floor((v-lo)/(hi-lo)*B))]++);
+  const mxh=Math.max(...h1,...h2);
+  let out=`<text x="${x0+120}" y="${T+12}" text-anchor="middle" style="font-size:13px;font-weight:600;fill:${col}">${title}</text>`;
+  const hh=120,bw=240/B,base=T+24+hh;
+  for(let i=0;i<B;i++){
+   out+=`<rect x="${x0+i*bw}" y="${base-h1[i]/mxh*hh}" width="${bw-1}" height="${h1[i]/mxh*hh}" fill="${css('green')}" opacity="0.6"/>`;
+   out+=`<rect x="${x0+i*bw}" y="${base-h2[i]/mxh*hh}" width="${bw-1}" height="${h2[i]/mxh*hh}" fill="${css('purple')}" opacity="0.6"/>`}
+  // 1-D error with midpoint threshold
+  const m1=p1.reduce((a,b)=>a+b)/p1.length,m2=p2.reduce((a,b)=>a+b)/p2.length;
+  const thr=(m1+m2)/2,sg=m1>m2?1:-1;
+  const err=(p1.filter(v=>sg*(v-thr)<0).length+p2.filter(v=>sg*(v-thr)>0).length)/(p1.length+p2.length);
+  out+=`<text x="${x0+120}" y="${base+20}" text-anchor="middle" style="font-size:12.5px;fill:var(--text-primary)">1-D error: <tspan style="font-weight:700;fill:${err>0.2?css('red'):css('green')}">${(100*err).toFixed(1)}%</tspan></text>`;
+  return out};
+ s+=histo(vp,590,'projected on PCA',css('blue'));
+ const fis=histo(w,590,'',css('red'));
+ s+=`<g transform="translate(0,210)">${histo(w,590,'projected on LDA',css('red'))}</g>`;
+ sv.innerHTML=s;
+ const sep=Math.hypot(dmu[0],dmu[1]);
+ document.getElementById('cap').textContent= sep<1.1?
+  'With the centers nearly on top of each other no projection can help — LDA’s denominator (within-class scatter) dwarfs its numerator. Pull the centers apart and watch the red direction lock onto the separation long before PCA notices anything.':
+  'PCA is unsupervised: it never sees the colors, so it aligns with the long axis of the combined cloud. LDA maximizes WᵀS_BW / WᵀS_WW — between-class over within-class scatter — so it points wherever the means differ, scaled by the noise. Drag a center around and watch the red axis follow it.'}
+function evt(e){const r=sv.getBoundingClientRect();return[(e.clientX-r.left)*860/r.width,(e.clientY-r.top)*460/r.height]}
+sv.addEventListener('pointerdown',e=>{const[a,b]=evt(e);
+ const d1=Math.hypot(X(mu1[0])-a,Y(mu1[1])-b),d2=Math.hypot(X(mu2[0])-a,Y(mu2[1])-b);
+ drag=d1<24?1:d2<24?2:0;
+ if(drag)sv.setPointerCapture(e.pointerId)});
+sv.addEventListener('pointermove',e=>{if(!drag)return;const[a,b]=evt(e);
+ const p=[Math.max(-RX+0.4,Math.min(RX-0.4,IX(a))),Math.max(-RY+0.4,Math.min(RY-0.4,IY(b)))];
+ if(drag===1)mu1=p;else mu2=p;draw()});
+sv.addEventListener('pointerup',()=>drag=0);
+draw();
+const post=()=>parent.postMessage({demoHeight:document.body.scrollHeight+8},'*');
+addEventListener('load',post);new ResizeObserver(post).observe(document.body);
+</script></body></html>
