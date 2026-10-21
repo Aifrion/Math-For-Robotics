@@ -9,7 +9,7 @@
     { href: 'lec4.html', title: '4 · Function Approximation', soon: true },
     { href: 'lec5.html', title: '5 · Root Finding' },
     { href: 'lec6.html', title: '6 · Optimization' },
-    { href: 'lec7.html', title: '7 · Integration & ODEs', soon: true },
+    { href: 'lec7.html', title: '7 · Integration & ODEs' },
     { href: 'lec8.html', title: '8 · Subspace Methods', soon: true },
     { group: 'Homework' },
     { href: 'hw2.html', title: 'HW2 · Trajectory Interpolation' }

@@ -1,0 +1,67 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Stiffness Explorer</title>
+<style>
+:root{--text-primary:#1f2937;--text-secondary:#4b5563;--text-muted:#9ca3af;--text-accent:#1d4ed8;--bg-accent:#dbeafe;--border:#e5e7eb;--border-strong:#cbd5e1;--border-accent:#93c5fd;--radius:8px;--bg:#fff;--blue:#2563eb;--green:#16a34a;--amber:#BA7517;--red:#dc2626;--gray:#9ca3af}
+@media (prefers-color-scheme:dark){:root{--text-primary:#e5e7eb;--text-secondary:#cbd5e1;--text-muted:#6b7280;--text-accent:#93c5fd;--bg-accent:#1e3a8a;--border:#2f2f2f;--border-strong:#4b5563;--border-accent:#3b82f6;--bg:#191919;--blue:#60a5fa;--green:#4ade80;--amber:#fbbf24;--red:#f87171;--gray:#6b7280}}
+body{margin:0;padding:12px 16px;background:var(--bg);color:var(--text-primary);font:14px/1.5 -apple-system,Segoe UI,Helvetica,Arial,sans-serif;max-width:900px}
+.row{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:6px;font-size:13px}
+.row button{font:inherit;font-size:13px;padding:4px 10px;border:0.5px solid var(--border-strong);border-radius:var(--radius);background:transparent;color:var(--text-primary);cursor:pointer}
+.row button.on{background:var(--bg-accent);color:var(--text-accent);border-color:var(--border-accent)}
+input[type=range]{flex:1;min-width:160px;max-width:380px}
+#out{font-size:13.5px;margin-top:6px;font-variant-numeric:tabular-nums;line-height:1.7}
+#cap{font-size:13px;color:var(--text-secondary);margin-top:4px;line-height:1.55}
+</style></head><body>
+<div class="row"><span>Euler step h (×10⁻³)</span>
+ <input type="range" id="h" min="0.5" max="3" step="0.02" value="1.5"><b id="hv"></b>
+ <button onclick="setH(1.9)">h = 0.0019</button><button onclick="setH(1.999)">h = 0.001999</button><button onclick="setH(2.05)">h = 0.00205</button></div>
+<svg id="sv" width="100%" viewBox="0 0 860 380"></svg>
+<div id="out"></div>
+<div id="cap"></div>
+<script>
+let hm=1.5;
+const sv=document.getElementById('sv');
+const css=v=>`var(--${v})`;
+function setH(v){hm=v;document.getElementById('h').value=v;draw()}
+function draw(){
+ const h=hm*1e-3;
+ document.getElementById('hv').textContent='h = '+(h.toFixed(5));
+ // u' = 998u + 1998v ; v' = -999u - 1999v ; u0=1,v0=0; u = 2e^-x - e^-1000x
+ const X1=0.6; // simulate to x=0.6
+ const n=Math.round(X1/h);
+ let u=1,v=0;
+ const pts=[[0,1]];let blew=false;
+ for(let i=1;i<=n;i++){
+  const du=998*u+1998*v, dv=-999*u-1999*v;
+  u+=h*du;v+=h*dv;
+  if(!isFinite(u)||Math.abs(u)>1e6){blew=true;break}
+  pts.push([i*h,u])}
+ const L=50,T=16,W=790,H=280;
+ const ymin=-0.5,ymax=2.3;
+ const X=x=>L+x/X1*W,Y=y=>T+(ymax-Math.max(ymin,Math.min(ymax,y)))/(ymax-ymin)*H;
+ let s=`<rect x="${L}" y="${T}" width="${W}" height="${H}" fill="none" stroke="var(--border)" stroke-width="0.6"/>`;
+ s+=`<path d="M${L} ${Y(0)}H${L+W}" stroke="var(--text-muted)" stroke-width="0.7"/>`;
+ // exact
+ let d='';for(let i=0;i<=400;i++){const x=X1*i/400;const ue=2*Math.exp(-x)-Math.exp(-1000*x);
+  d+=(i?'L':'M')+X(x).toFixed(1)+' '+Y(ue).toFixed(1)}
+ s+=`<path d="${d}" stroke="${css('gray')}" stroke-width="3.5" fill="none" opacity="0.5"/>`;
+ // euler
+ let d2='';const dec=Math.max(1,Math.floor(pts.length/1200));
+ pts.forEach((p,i)=>{if(i%dec&&i!==pts.length-1)return;d2+=(d2?'L':'M')+X(p[0]).toFixed(1)+' '+Y(p[1]).toFixed(1)});
+ s+=`<path d="${d2}" stroke="${blew?css('red'):css('blue')}" stroke-width="1.6" fill="none"/>`;
+ s+=`<text x="${L+W/2}" y="${T+H+22}" text-anchor="middle" style="font-size:11.5px;fill:var(--text-muted)">x &nbsp;—&nbsp; gray: exact u(x) · ${blew?'red':'blue'}: explicit Euler</text>`;
+ sv.innerHTML=s;
+ const margin=h*1000;
+ document.getElementById('out').innerHTML=
+  `fast eigenvalue λ = −1000 → stability needs |1 + hλ| ≤ 1, i.e. <b>h ≤ 0.002</b> &nbsp;·&nbsp; `+
+  `your h·1000 = <b style="color:${margin<=2?'var(--text-accent)':'var(--text-danger)'}">${margin.toFixed(2)}</b> `+
+  (blew?` → <b style="color:var(--text-danger)">BLEW UP after ${pts.length} steps</b>`:` → stable ✓ (${n.toLocaleString()} steps to x = 0.6)`);
+ document.getElementById('cap').textContent= margin<=2?
+  (margin>1.9?'Right at the edge: the fast mode’s factor (1 − 1000h) is barely inside ±1, so each step rings — the solution follows the smooth curve, but any step a hair larger tips it over. Try the 0.00205 button.':
+  'Stable — but notice the absurdity: e⁻¹⁰⁰⁰ˣ is gone after x ≈ 0.01, yet all '+n.toLocaleString()+' steps are sized for it. That’s stiffness: a dead component dictating cost. Implicit methods (backward Euler) fix this by being stable at any h.')
+  :'Past the cliff. The fast mode’s per-step factor |1 − 1000h| > 1, so the already-invisible e⁻¹⁰⁰⁰ˣ component doubles every few steps until it swallows everything. The failure is instant and total — stiffness does not degrade gracefully.'}
+document.getElementById('h').oninput=e=>{hm=+e.target.value;draw()};
+draw();
+const post=()=>parent.postMessage({demoHeight:document.body.scrollHeight+8},'*');
+addEventListener('load',post);new ResizeObserver(post).observe(document.body);
+</script></body></html>

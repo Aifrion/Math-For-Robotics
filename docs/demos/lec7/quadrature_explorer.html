@@ -1,0 +1,86 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Quadrature Explorer</title>
+<style>
+:root{--text-primary:#1f2937;--text-secondary:#4b5563;--text-muted:#9ca3af;--text-accent:#1d4ed8;--bg-accent:#dbeafe;--border:#e5e7eb;--border-strong:#cbd5e1;--border-accent:#93c5fd;--radius:8px;--bg:#fff;--blue:#2563eb;--green:#16a34a;--amber:#BA7517;--red:#dc2626}
+@media (prefers-color-scheme:dark){:root{--text-primary:#e5e7eb;--text-secondary:#cbd5e1;--text-muted:#6b7280;--text-accent:#93c5fd;--bg-accent:#1e3a8a;--border:#2f2f2f;--border-strong:#4b5563;--border-accent:#3b82f6;--bg:#191919;--blue:#60a5fa;--green:#4ade80;--amber:#fbbf24;--red:#f87171}}
+body{margin:0;padding:12px 16px;background:var(--bg);color:var(--text-primary);font:14px/1.5 -apple-system,Segoe UI,Helvetica,Arial,sans-serif;max-width:900px}
+.row{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:6px}
+.row button{font:inherit;font-size:13px;padding:4px 10px;border:0.5px solid var(--border-strong);border-radius:var(--radius);background:transparent;color:var(--text-primary);cursor:pointer}
+.row button.on{background:var(--bg-accent);color:var(--text-accent);border-color:var(--border-accent)}
+input[type=range]{flex:1;min-width:120px;max-width:260px}
+#out{font-size:13.5px;margin-top:6px;font-variant-numeric:tabular-nums;line-height:1.7}
+#cap{font-size:13px;color:var(--text-secondary);margin-top:4px;line-height:1.55}
+</style></head><body>
+<div class="row">
+ <button data-f="0" class="on">sin x on [0, π]</button>
+ <button data-f="1">spike: 1/(0.04+x²) on [−1, 1]</button>
+ <span style="width:8px"></span>
+ <button data-m="t" class="on">trapezoid</button>
+ <button data-m="s">Simpson</button>
+ <span style="margin-left:8px;font-size:13px">panels N</span><input type="range" id="n" min="1" max="6" step="1" value="2"><b id="nv" style="font-size:13px"></b></div>
+<svg id="sv" width="100%" viewBox="0 0 860 360"></svg>
+<div id="out"></div>
+<div id="cap"></div>
+<script>
+const FUNS=[
+ {f:Math.sin,a:0,b:Math.PI,I:2,name:'∫₀^π sin x dx = 2',
+  cap:'A smooth gentle function. Watch the readout as you double N: trapezoid error falls 4× each time (order 2), Simpson 16× (order 4). By N = 32 Simpson is already at 10⁻⁶ — this is why convergence *order*, not effort, decides the method.'},
+ {f:x=>1/(0.04+x*x),a:-1,b:1,I:2/0.2*Math.atan(1/0.2),name:'∫₋₁¹ dx/(0.04+x²) = 10·atan 5 ≈ 13.73',
+  cap:'A sharp spike at x = 0. Uniform panels waste most of their budget on the flat tails and still miss the peak — errors stay large until N is big. This is the slides’ case for adaptive/partitioned integration: split the interval and spend panels where the function actually moves.'}];
+let fi=0,method='t',k=2;
+const sv=document.getElementById('sv');
+const css=v=>`var(--${v})`;
+function draw(){
+ const F=FUNS[fi],f=F.f,N=(method==='s'?2:1)*Math.pow(2,k-1);  // simpson needs even
+ document.getElementById('nv').textContent=N;
+ const L=50,T=16,W=790,H=280;
+ let lo=0,hi=-1e9;
+ for(let i=0;i<=300;i++){const v=f(F.a+(F.b-F.a)*i/300);hi=Math.max(hi,v);lo=Math.min(lo,v,0)}
+ hi*=1.08;
+ const X=x=>L+(x-F.a)/(F.b-F.a)*W,Y=y=>T+(hi-y)/(hi-lo)*H;
+ let s='';
+ // approximation shapes
+ const h=(F.b-F.a)/N;
+ let approx=0;
+ if(method==='t'){
+  for(let i=0;i<N;i++){const x0=F.a+i*h,x1=x0+h,y0=f(x0),y1=f(x1);
+   approx+=h*(y0+y1)/2;
+   s+=`<path d="M${X(x0)} ${Y(0)}L${X(x0)} ${Y(y0)}L${X(x1)} ${Y(y1)}L${X(x1)} ${Y(0)}Z" fill="${css('blue')}" fill-opacity="0.15" stroke="${css('blue')}" stroke-width="1"/>`}}
+ else{
+  for(let i=0;i<N;i+=2){const x0=F.a+i*h,x1=x0+h,x2=x0+2*h,y0=f(x0),y1=f(x1),y2=f(x2);
+   approx+=h/3*(y0+4*y1+y2);
+   let d=`M${X(x0)} ${Y(0)}L${X(x0)} ${Y(y0)}`;
+   for(let j=0;j<=24;j++){const t=j/24,x=x0+2*h*t;
+    const yq=y0*(x-x1)*(x-x2)/((x0-x1)*(x0-x2))+y1*(x-x0)*(x-x2)/((x1-x0)*(x1-x2))+y2*(x-x0)*(x-x1)/((x2-x0)*(x2-x1));
+    d+=`L${X(x).toFixed(1)} ${Y(yq).toFixed(1)}`}
+   d+=`L${X(x2)} ${Y(0)}Z`;
+   s+=`<path d="${d}" fill="${css('green')}" fill-opacity="0.15" stroke="${css('green')}" stroke-width="1"/>`}}
+ // true curve
+ let d='';for(let i=0;i<=300;i++){const x=F.a+(F.b-F.a)*i/300;d+=(i?'L':'M')+X(x).toFixed(1)+' '+Y(f(x)).toFixed(1)}
+ s+=`<path d="${d}" stroke="var(--text-primary)" stroke-width="2.2" fill="none"/>`;
+ s+=`<path d="M${L} ${Y(0)}H${L+W}" stroke="var(--text-muted)" stroke-width="0.8"/>`;
+ // nodes
+ for(let i=0;i<=N;i++){const x=F.a+i*h;s+=`<circle cx="${X(x)}" cy="${Y(f(x))}" r="3.5" fill="${css('amber')}"/>`}
+ sv.innerHTML=s;
+ const err=Math.abs(approx-F.I);
+ // also compute both methods at this N and at 2N for the order story
+ const quad=(m,n)=>{const hh=(F.b-F.a)/n;let sum=0;
+  if(m==='t'){for(let i=0;i<n;i++){sum+=hh*(f(F.a+i*hh)+f(F.a+(i+1)*hh))/2}}
+  else{for(let i=0;i<n;i+=2){sum+=hh/3*(f(F.a+i*hh)+4*f(F.a+(i+1)*hh)+f(F.a+(i+2)*hh))}}
+  return sum};
+ const err2=Math.abs(quad(method,2*N)-F.I);
+ const fe=v=>v===0?'0':v.toExponential(2).replace('-','−');
+ document.getElementById('out').innerHTML=
+  `${F.name} &nbsp;·&nbsp; ${method==='t'?'trapezoid':'Simpson'} with N = ${N}: <b>${approx.toFixed(6)}</b>, error <b style="color:${css('red')}">${fe(err)}</b>`+
+  `<br>double to N = ${2*N} → error ${fe(err2)} &nbsp;(÷${err2>0?(err/err2).toFixed(1):'∞'}; order ${method==='t'?'2 predicts ÷4':'4 predicts ÷16'})`;
+ document.getElementById('cap').textContent=F.cap}
+document.querySelectorAll('[data-f]').forEach(b=>b.onclick=()=>{fi=+b.dataset.f;
+ document.querySelectorAll('[data-f]').forEach(x=>x.classList.toggle('on',x===b));draw()});
+document.querySelectorAll('[data-m]').forEach(b=>b.onclick=()=>{method=b.dataset.m;
+ document.querySelectorAll('[data-m]').forEach(x=>x.classList.toggle('on',x===b));draw()});
+document.getElementById('n').oninput=e=>{k=+e.target.value;draw()};
+draw();
+const post=()=>parent.postMessage({demoHeight:document.body.scrollHeight+8},'*');
+addEventListener('load',post);new ResizeObserver(post).observe(document.body);
+</script></body></html>

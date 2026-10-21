@@ -1,0 +1,91 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Pendulum Integrators</title>
+<style>
+:root{--text-primary:#1f2937;--text-secondary:#4b5563;--text-muted:#9ca3af;--text-accent:#1d4ed8;--bg-accent:#dbeafe;--border:#e5e7eb;--border-strong:#cbd5e1;--border-accent:#93c5fd;--radius:8px;--bg:#fff;--blue:#2563eb;--green:#16a34a;--amber:#BA7517;--red:#dc2626;--gray:#9ca3af}
+@media (prefers-color-scheme:dark){:root{--text-primary:#e5e7eb;--text-secondary:#cbd5e1;--text-muted:#6b7280;--text-accent:#93c5fd;--bg-accent:#1e3a8a;--border:#2f2f2f;--border-strong:#4b5563;--border-accent:#3b82f6;--bg:#191919;--blue:#60a5fa;--green:#4ade80;--amber:#fbbf24;--red:#f87171;--gray:#6b7280}}
+body{margin:0;padding:12px 16px;background:var(--bg);color:var(--text-primary);font:14px/1.5 -apple-system,Segoe UI,Helvetica,Arial,sans-serif;max-width:900px}
+.row{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:6px;font-size:13px}
+.row button{font:inherit;font-size:13px;padding:4px 10px;border:0.5px solid var(--border-strong);border-radius:var(--radius);background:transparent;color:var(--text-primary);cursor:pointer}
+.row button.on{background:var(--bg-accent);color:var(--text-accent);border-color:var(--border-accent)}
+input[type=range]{flex:1;min-width:120px;max-width:240px}
+#out{font-size:13.5px;margin-top:6px;font-variant-numeric:tabular-nums;line-height:1.7}
+#cap{font-size:13px;color:var(--text-secondary);margin-top:4px;line-height:1.55}
+</style></head><body>
+<div class="row"><span>step h</span><input type="range" id="h" min="0" max="100" value="55"><b id="hv"></b>
+ <span style="margin-left:8px">simulate</span>
+ <button data-T="10">10 s</button><button data-T="30" class="on">30 s</button><button data-T="100">100 s</button></div>
+<svg id="sv" width="100%" viewBox="0 0 860 420"></svg>
+<div id="out"></div>
+<div id="cap"></div>
+<script>
+// undamped pendulum: th'' = -sin th  ->  [th, w]' = [w, -sin th]
+let hSlider=55,Tend=30;
+const sv=document.getElementById('sv');
+const css=v=>`var(--${v})`;
+const f=([t,w])=>[w,-Math.sin(t)];
+function stepEuler(y,h){const k=f(y);return[y[0]+h*k[0],y[1]+h*k[1]]}
+function stepRK2(y,h){const k1=f(y);const k2=f([y[0]+h/2*k1[0],y[1]+h/2*k1[1]]);
+ return[y[0]+h*k2[0],y[1]+h*k2[1]]}
+function stepRK4(y,h){const k1=f(y);
+ const k2=f([y[0]+h/2*k1[0],y[1]+h/2*k1[1]]);
+ const k3=f([y[0]+h/2*k2[0],y[1]+h/2*k2[1]]);
+ const k4=f([y[0]+h*k3[0],y[1]+h*k3[1]]);
+ return[y[0]+h*(k1[0]+2*k2[0]+2*k3[0]+k4[0])/6,y[1]+h*(k1[1]+2*k2[1]+2*k3[1]+k4[1])/6]}
+const E=([t,w])=>0.5*w*w+1-Math.cos(t);
+function draw(){
+ const h=0.02*Math.pow(25,hSlider/100); // 0.02 .. 0.5
+ document.getElementById('hv').textContent='h = '+h.toFixed(3)+' s';
+ const y0=[2.0,0];
+ const E0=E(y0);
+ const runs=[['Euler',stepEuler,css('red')],['RK2 (midpoint)',stepRK2,css('blue')],['RK4',stepRK4,css('green')]];
+ const n=Math.min(40000,Math.round(Tend/h));
+ const L=40,T=14,S=390;
+ const R=2.9;
+ const X=t=>L+(t+R)/(2*R)*S,Y=w=>T+(R-w)/(2*R)*S;
+ let s=`<rect x="${L}" y="${T}" width="${S}" height="${S}" fill="none" stroke="var(--border)" stroke-width="0.6"/>`;
+ s+=`<path d="M${X(0)} ${T}V${T+S}M${L} ${Y(0)}H${L+S}" stroke="var(--text-muted)" stroke-width="0.6"/>`;
+ s+=`<text x="${L+S/2}" y="${T+S+18}" text-anchor="middle" style="font-size:11.5px;fill:var(--text-muted)">angle θ</text>`;
+ s+=`<text x="${L-26}" y="${T+12}" style="font-size:11.5px;fill:var(--text-muted)">θ̇</text>`;
+ // true orbit (energy contour through y0): dense RK4 tiny step as reference
+ let yr=y0.slice(),dref='';
+ for(let i=0;i<4000;i++){yr=stepRK4(yr,0.01);if(i%8===0)dref+=(dref?'L':'M')+X(yr[0]).toFixed(1)+' '+Y(yr[1]).toFixed(1)}
+ s+=`<path d="${dref}" stroke="${css('gray')}" stroke-width="3" fill="none" opacity="0.4"/>`;
+ const stats=[];
+ for(const [name,st,col] of runs){
+  let y=y0.slice(),d='M'+X(y[0]).toFixed(1)+' '+Y(y[1]).toFixed(1);
+  let drift=0,escaped=false;
+  const dec=Math.max(1,Math.floor(n/1500));
+  for(let i=0;i<n;i++){y=st(y,h);
+   if(!isFinite(y[0])||Math.abs(y[1])>50){escaped=true;break}
+   if(i%dec===0){const cx=Math.max(-R,Math.min(R,y[0])),cy=Math.max(-R,Math.min(R,y[1]));
+    d+='L'+X(cx).toFixed(1)+' '+Y(cy).toFixed(1)}}
+  drift=escaped?Infinity:Math.abs(E(y)-E0)/E0;
+  s+=`<path d="${d}" stroke="${col}" stroke-width="1.3" fill="none" opacity="0.9"/>`;
+  stats.push([name,col,drift,escaped])}
+ // energy bar panel
+ const bx=480,by=60;
+ s+=`<text x="${bx}" y="${by-18}" style="font-size:13px;font-weight:600;fill:var(--text-primary)">energy drift after ${Tend} s</text>`;
+ stats.forEach(([name,col,drift,esc],i)=>{
+  const y=by+i*64;
+  s+=`<text x="${bx}" y="${y}" style="font-size:13px;fill:${col};font-weight:600">${name}</text>`;
+  const val=esc?'blew up':drift>1?'energy ×'+(1+drift).toFixed(1):((100*drift).toPrecision(2)+'%');
+  const w=esc?340:Math.min(340,Math.max(2,60*Math.log10(1+drift*1e4)));
+  s+=`<rect x="${bx}" y="${y+8}" width="${w}" height="14" rx="4" fill="${col}" opacity="0.65"/>`;
+  s+=`<text x="${bx+w+8}" y="${y+20}" style="font-size:12.5px;fill:var(--text-primary)">${val}</text>`});
+ s+=`<text x="${bx}" y="${by+200}" style="font-size:12px;fill:var(--text-muted)">gray ring = true orbit (undamped pendulum</text>`;
+ s+=`<text x="${bx}" y="${by+216}" style="font-size:12px;fill:var(--text-muted)">conserves energy: the phase path must close)</text>`;
+ sv.innerHTML=s;
+ const h3=(name)=>stats.find(x=>x[0].startsWith(name));
+ document.getElementById('out').innerHTML=
+  `pendulum θ″ = −sin θ, θ₀ = 2 rad · ${n.toLocaleString()} steps of h = ${h.toFixed(3)} (Euler 1, RK2 2, RK4 4 f-evals per step)`;
+ document.getElementById('cap').textContent=
+  h<0.1?'With a small step all three look closed — but check the drift numbers: Euler still leaks energy orders of magnitude faster. For a robot simulator running days of sim time, that leak is the difference between a stable walker and one that gains energy until it flings itself apart.':
+  'Euler (red) treats the start-of-step slope as true for the whole step, so every step overshoots outward: the orbit spirals and energy grows without bound. RK2 curbs it; RK4’s four probes cancel error to h⁴ and the orbit closes. Same physics, same h — only the integrator differs.'}
+document.querySelectorAll('[data-T]').forEach(b=>b.onclick=()=>{Tend=+b.dataset.T;
+ document.querySelectorAll('[data-T]').forEach(x=>x.classList.toggle('on',x===b));draw()});
+document.getElementById('h').oninput=e=>{hSlider=+e.target.value;draw()};
+draw();
+const post=()=>parent.postMessage({demoHeight:document.body.scrollHeight+8},'*');
+addEventListener('load',post);new ResizeObserver(post).observe(document.body);
+</script></body></html>

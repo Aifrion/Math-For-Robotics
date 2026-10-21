@@ -1,0 +1,256 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Lecture 7 — Integration &amp; ODEs | Math for Robotics</title>
+<link rel="stylesheet" href="assets/site.css">
+<link rel="stylesheet" href="vendor/katex/katex.min.css">
+<script defer src="vendor/katex/katex.min.js"></script>
+<script defer src="vendor/katex/auto-render.min.js"></script>
+<script defer src="assets/site.js"></script>
+</head><body>
+<div class="layout">
+<main><div class="content">
+
+<h1>Lecture 7: Integration of Functions &amp; ODEs</h1>
+
+<div class="callout summary"><span class="tag">The one-sentence version:</span>
+integration is prediction — "given how things change, where will they be?" — and the craft is
+spending function evaluations where they buy accuracy: higher-order rules, adaptive steps, and
+never letting a dead fast mode dictate your step size.
+<br><span class="small muted">CSE 276C, Lecture 7 · Prof. Henrik Christensen · Numerical Recipes ch. 4 &amp; 16.
+All numbers verified in <code>scripts/lec7/verify.py</code>.</span></div>
+
+<div class="toc"><b>Contents</b><ol>
+<li><a href="#why">Why robots integrate</a></li>
+<li><a href="#rules">Trapezoid, Simpson &amp; friends</a></li>
+<li><a href="#romberg">Romberg: coarse-to-fine for free</a></li>
+<li><a href="#improper">Improper integrals &amp; substitutions</a></li>
+<li><a href="#gauss">Gauss integration &amp; adaptivity</a></li>
+<li><a href="#odes">ODEs: everything becomes first order</a></li>
+<li><a href="#rk">Euler → RK2 → RK4</a></li>
+<li><a href="#adaptive">Adaptive steps &amp; PI control</a></li>
+<li><a href="#bs">Bulirsch–Stoer</a></li>
+<li><a href="#stiff">Stiffness (the slides' "variable dynamics")</a></li>
+<li><a href="#pde">PDEs in one slide</a></li>
+<li><a href="#summary">Summary</a></li>
+</ol></div>
+
+<h2 id="big">The big picture</h2>
+<p>Lecture 3 interpolated between samples; this lecture <em>sums</em> those interpolants.
+Every quadrature rule below is literally "fit a Lecture-3 polynomial on each panel, integrate it
+exactly" — and every ODE method is "use the slope now to predict the state next".</p>
+<p style="text-align:center" class="small"><b>chords</b> (trapezoid) → <b>parabolas</b> (Simpson) →
+<b>extrapolate h → 0</b> (Romberg / Bulirsch–Stoer) → <b>adapt the step</b> → <b>respect stiffness</b></p>
+<table>
+<tr><th>robotics problem</th><th>what you have</th><th>what you need</th><th>method</th></tr>
+<tr><td>odometry / dead reckoning</td><td>wheel or IMU rates</td><td>position over time</td><td>ODE integration (RK)</td></tr>
+<tr><td>physics simulation</td><td>equations of motion</td><td>trajectories that don't gain energy</td><td>RK4 / adaptive RK</td></tr>
+<tr><td>path length, swept volume, exposure</td><td>an integrand you can evaluate</td><td>one number</td><td>Simpson / Romberg / Gauss</td></tr>
+<tr><td>motor + controller in one model</td><td>fast electrical + slow mechanical dynamics</td><td>stable simulation</td><td>stiff-aware (implicit) solvers</td></tr>
+</table>
+
+<h2 id="why">1 · Why robots integrate</h2>
+<p>The slides frame \(I = \int_a^b f(x)\,dx\) as the ODE \(y' = f(x)\), \(y(a) = 0\), solve for
+\(y(b)\) — so quadrature and ODE solving are one subject. Applications: position estimation,
+path optimization, image restoration. The goal everywhere: a good estimate of y(b) with a
+<em>reasonable number of evaluations</em>.</p>
+
+<h2 id="rules">2 · Trapezoid, Simpson &amp; friends</h2>
+<p>Sample uniformly, \(x_i = x_0 + ih\), \(f_i = f(x_i)\), and integrate the interpolant
+(the Newton–Cotes family):</p>
+$$\text{trapezoid: } \int_{x_0}^{x_1} f \approx \frac{f_0 + f_1}{2}h + O(f''h^3)
+\qquad
+\text{Simpson: } \int_{x_0}^{x_2} f \approx \frac{h}{3}(f_0 + 4f_1 + f_2) + O(h^5 f^{(4)})$$
+<table>
+<tr><th>rule</th><th>fits a…</th><th>per-panel error</th><th>whole-interval order</th></tr>
+<tr><td>trapezoid</td><td>chord (degree 1)</td><td>O(h³f″)</td><td>error ∝ 1/N² — doubling N buys ÷4</td></tr>
+<tr><td>midpoint</td><td>constant at the center</td><td>O(h³f″), half the trapezoid's constant</td><td>∝ 1/N²; never evaluates the endpoints (handy for singular ends)</td></tr>
+<tr><td>Simpson</td><td>parabola (degree 2)</td><td>O(h⁵f⁗) — exact through degree 3</td><td>∝ 1/N⁴ — doubling N buys ÷16</td></tr>
+<tr><td>Simpson ⅜</td><td>cubic over 3 panels</td><td>\(\tfrac{h}{8}(3f_0+9f_1+9f_2+3f_3)\)… see fine print</td><td>same order as Simpson</td></tr>
+</table>
+<p>Chained over N panels, the extended trapezoid is
+\(h(\tfrac12 f_0 + f_1 + \dots + f_{N-1} + \tfrac12 f_N)\) with error
+\(O\!\big((x_N - x_0)^3 f'' / N^2\big)\).</p>
+<div class="callout insight"><span class="tag">💡 The lucky accident of Simpson:</span> a parabola
+(degree 2) integrates <em>cubics</em> exactly too — the cubic's extra error is odd and cancels over
+the symmetric panel. That free degree is where the jump from h³ to h⁵ comes from.</div>
+
+<p class="try">🕹️ <b>Try it:</b> watch the shaded panels hug the curve, and the error divide by 4 (trapezoid) or 16 (Simpson) per doubling. The <b>spike</b> preset shows uniform panels failing.</p>
+<div class="demo-wrap"><iframe class="demo" src="demos/lec7/quadrature_explorer.html" height="560" title="Quadrature explorer"></iframe></div>
+
+<details><summary>Worked example: ∫₀^π sin x dx = 2, verified orders (click to open)</summary><div class="body">
+<p>Trapezoid error at N = 16: 6.4×10⁻³; at N = 32: 1.6×10⁻³ → ratio 4.00 ✓ (order 2).
+Simpson: 1.66×10⁻⁵ → 1.03×10⁻⁶ → ratio 16.06 ✓ (order 4). Midpoint at N = 16: 3.2×10⁻³ —
+same order as trapezoid, about half the error, opposite sign.</p></div></details>
+
+<h2 id="romberg">3 · Romberg: coarse-to-fine, then extrapolate to h = 0</h2>
+<p>The slides' "strategy": refine coarse-to-fine and watch convergence. The payoff is the
+Euler–Maclaurin formula — the trapezoid's error is a clean series in even powers of h, with
+Bernoulli-number coefficients (\(B_0 = 1, B_2 = \tfrac16, B_4 = -\tfrac1{30}\), from
+\(t/(e^t-1) = \sum B_n t^n / n!\)). A series in h² can be <b>extrapolated to h = 0</b>: combine the
+N and 2N trapezoid answers to cancel the h² term, then those to cancel h⁴, and so on — reusing
+every evaluation already made.</p>
+<details><summary>Worked example: the Romberg table for ∫₀^π sin (click to open)</summary><div class="body">
+<p>Errors down the first column (plain trapezoid, N = 2…32): 4.3×10⁻¹ → 1.6×10⁻³.
+Along the extrapolated diagonal: 4.3×10⁻¹ → 4.6×10⁻³ → 1.7×10⁻⁵ → 1.6×10⁻⁸ → <b>4×10⁻¹²</b>.
+Same 33 samples, eight more digits. ✓ verified.</p></div></details>
+
+<h2 id="improper">4 · Improper integrals: fix them by substitution</h2>
+<p>The slides' taxonomy of "improper": a removable point value (\(\sin x / x\) at 0), an infinite
+limit, an endpoint singularity (\(x^{-1/2}\) at 0), an interior singularity (known or unknown
+location). If the <em>value</em> is infinite (\(\int_0^\infty x^{-1}\)), it's not improper — it's
+impossible.</p>
+<p>The cure is a change of variable. For an infinite limit:
+\(\int_a^b f(x)\,dx = \int_{1/b}^{1/a} \tfrac{1}{t^2} f(1/t)\,dt\) (valid when a, b share a sign).
+In general \(\int f(x)dx = \int f(x(t))\,\frac{dx}{dt}dt\) — pick x(t) so the transformed integrand
+is tame. The slides' example, the <b>Schwartz tanh rule</b>:</p>
+$$x = \tfrac12(b+a) + \tfrac12(b-a)\tanh t, \qquad
+\frac{dx}{dt} = \tfrac12(b-a)\,\mathrm{sech}^2 t$$
+<p>sech² dies double-exponentially fast, crushing endpoint singularities before they hurt.
+Verified: \(\int_0^1 x^{-1/2}dx = 2\); naive trapezoid hits 1/√0 = ∞ at the first endpoint,
+the tanh-transformed trapezoid quietly returns 1.995 with 201 points (and converges further with a wider t-window).</p>
+
+<h2 id="gauss">5 · Gauss integration &amp; adaptivity</h2>
+<p>Drop uniform spacing: choose nodes <em>and</em> weights,
+\(\int_a^b W(x) f(x) dx \approx \sum_j W_j f(x_j)\). With n optimally placed nodes you integrate
+polynomials up to degree 2n−1 exactly — double the Newton–Cotes order for the same evaluations.
+(The nodes turn out to be roots of orthogonal polynomials — Chebyshev's cousins from Lecture 4.)
+The slides also note the mixture view: approximate f by Gaussians and integrate those in closed form.</p>
+<div class="callout insight"><span class="tag">💡 Partitioned/adaptive integration:</span>
+when dynamics vary across the interval ("Rule 1 of data analysis: understand your data"), split
+\(\int_a^b = \int_a^m + \int_m^b\) and refine each part until <em>it</em> converges — spend panels
+where the function moves. That's what the spike preset in the demo is begging for.</div>
+
+<h2 id="odes">6 · ODEs: everything becomes first order</h2>
+<p>Any higher-order ODE reduces to coupled first-order ones by naming the derivatives.
+The slides' mass under force F:</p>
+$$m\ddot u_1 = F(u_1) \;\xrightarrow{\;u_2 \,=\, \dot u_1\;}\;
+\frac{d}{dt}\begin{pmatrix}u_1\\u_2\end{pmatrix} = \begin{pmatrix}u_2\\ F(u_1)/m\end{pmatrix}
+\;=\; f(u, t)$$
+<p>So every solver below only ever sees \(\dot y = f(y, t)\) — state in, slope out. (That state
+vector is exactly a robot's \((\theta, \dot\theta)\).) Three families: <b>Runge–Kutta</b> (the
+generic workhorse, great when f is cheap), <b>Richardson/Bulirsch–Stoer</b> (high precision),
+<b>predictor-corrector</b> (historically interesting, rarely used today).</p>
+
+<h2 id="rk">7 · Euler → RK2 → RK4</h2>
+<p>Forward Euler trusts the slope at the start of the step for the whole step:</p>
+$$y_{n+1} = y_n + h f(x_n, y_n) \qquad \text{(asymmetric: error } O(h^2) \text{ per step)}$$
+<p>RK2 fixes the asymmetry by probing the midpoint first; RK4 probes four times and takes a
+weighted average:</p>
+$$\begin{aligned}
+k_1 &= hf(x_n, y_n) & k_2 &= hf(x_n + \tfrac h2, y_n + \tfrac{k_1}2)\\
+k_3 &= hf(x_n + \tfrac h2, y_n + \tfrac{k_2}2) & k_4 &= hf(x_n + h, y_n + k_3)
+\end{aligned}
+\qquad y_{n+1} = y_n + \tfrac{k_1}6 + \tfrac{k_2}3 + \tfrac{k_3}3 + \tfrac{k_4}6 + O(h^5)$$
+<figure><img src="figures/lec7/02_rk4_anatomy.svg" alt="RK4 anatomy" width="760">
+<figcaption>Fig 1 — one RK4 step: four slope probes, weighted 1:2:2:1. Four evaluations per step, and "by far the most frequently used" (slides).</figcaption></figure>
+<details><summary>Worked example: measured orders on y′ = y (click to open)</summary><div class="body">
+<p>Error at x = 1 (true value e), halving h from 0.05 to 0.025:
+Euler 6.5×10⁻² → 3.3×10⁻² (÷1.96 ≈ 2¹), RK2 1.1×10⁻³ → 2.8×10⁻⁴ (÷3.93 ≈ 2²),
+RK4 1.4×10⁻⁷ → 8.7×10⁻⁹ (÷15.7 ≈ 2⁴). Orders 1, 2, 4 ✓.</p></div></details>
+
+<p class="try">🕹️ <b>Try it:</b> same pendulum, same step — Euler spirals outward (energy leak), RK4's orbit closes. Crank h up and watch Euler fling the pendulum over the top.</p>
+<div class="demo-wrap"><iframe class="demo" src="demos/lec7/pendulum_integrators.html" height="560" title="Pendulum integrators"></iframe></div>
+
+<h2 id="adaptive">8 · Adaptive step size &amp; PI control</h2>
+<p>The obvious error estimate (slides): take a full step, take two half steps, compare; recurse if
+needed. Nobody goes beyond 5th-order RK — better to spend effort on <em>step-size control</em> than
+on order. And since step control is a feedback loop, the slides close it with an actual PI controller:</p>
+$$h_{n+1} = S\,h_n\,\mathrm{err}_n^{\alpha}\,\mathrm{err}_{n-1}^{\beta},
+\qquad \alpha = \tfrac1k - 0.75\beta, \quad \beta = \tfrac{0.4}{k}$$
+<p class="small muted">S a safety factor, k the integrator's order. The proportional part reacts to the current error, the integral part smooths against oscillating step sizes — control theory applied to the solver itself.</p>
+
+<h2 id="bs">9 · Bulirsch–Stoer: midpoints + Richardson extrapolation</h2>
+<p>Take one <em>big</em> step H, crossed by n modified-midpoint substeps (h = H/n, centered
+differences, so the error is a series in even powers of h — same trick as Romberg):</p>
+$$z_0 = y(x_n), \quad z_1 = z_0 + hf, \quad z_{m+1} = z_{m-1} + 2hf(x_n + mh, z_m), \quad
+y(x_n + H) = \tfrac12\big[z_n + z_{n-1} + hf(x+H, z_n)\big]$$
+<p>Then combine runs with different n and extrapolate to h → 0. The first rung:</p>
+$$y(x+H) = \frac{4y_n - y_{n/2}}{3} \quad\text{— 4th order, like RK4, with ~⅔ fewer evaluations}$$
+<p>Deeper rungs use the Romberg-style tableau (each new n adds a row; \(T_{kk} - T_{k,k-1}\) is a
+free error estimate, driving step-size selection). Step sequences: n = 2, 4, 6, 8, 12, 16, 24, 32…
+or the newer n<sub>j</sub> = 2(j+1).</p>
+<details><summary>Worked example: the first extrapolation really is 4th order (click to open)</summary><div class="body">
+<p>y′ = y over H = 1: modified midpoint with n = 4 errs by 2.7×10⁻², n = 8 by 7.0×10⁻³ (÷3.9 — the h² series at work).
+Richardson: (4y₈ − y₄)/3 errs by <b>3.6×10⁻⁴</b>, a 20× bonus with zero new evaluations. ✓</p></div></details>
+<div class="callout gotcha"><span class="tag">⚠️ When not to use it (slides):</span>
+functions with table lookups / interpolated data (not smooth enough to extrapolate), singularities
+inside the range, or "expensive" f. Bulirsch–Stoer is the precision tool for smooth problems; RK is the generic one.</div>
+
+<h2 id="stiff">10 · Stiffness: the dead mode that owns your step size</h2>
+<p>The slides' "variable dynamics" example:</p>
+$$u' = 998u + 1998v, \qquad v' = -999u - 1999v, \qquad u(0)=1,\; v(0)=0$$
+$$\Rightarrow\; u = 2e^{-x} - e^{-1000x}, \qquad v = -e^{-x} + e^{-1000x}$$
+<p>Two time scales: eigenvalues −1 and −1000 (verified). The fast term is numerically zero after
+x ≈ 0.01 — but explicit Euler's stability requires \(|1 + h\lambda| \le 1\) for <em>every</em>
+eigenvalue, so h ≤ 2/1000 = 0.002 <em>forever</em>.</p>
+
+<figure><img src="figures/lec7/03_stiffness.svg" alt="Stiff solution two scales" width="860">
+<figcaption>Fig 2 — the solution itself is boring: a 10-ms transient, then a gentle decay. The danger is invisible.</figcaption></figure>
+
+<p class="try">🕹️ <b>Try it:</b> slide h across 0.002 and watch a perfectly smooth solution detonate. The cliff is exactly where |1 − 1000h| crosses 1.</p>
+<div class="demo-wrap"><iframe class="demo" src="demos/lec7/stiff_explorer.html" height="560" title="Stiffness explorer"></iframe></div>
+
+<div class="callout insight"><span class="tag">💡 Why robots care:</span> stiffness is everywhere a
+fast subsystem rides on a slow one — motor electrical dynamics (ms) under arm mechanics (s), contact
+forces under body motion. Remedies: implicit methods (backward Euler is stable at any h) or
+splitting the time scales. Diagnosing "my sim explodes unless h is tiny" as stiffness is a rite of passage.</div>
+
+<h2 id="pde">11 · PDEs in one slide</h2>
+<p>When the unknown is a field u(x, t), the three canonical families (whole courses exist: MATH 110/231):</p>
+<table>
+<tr><th>type</th><th>equation</th><th>prototype</th><th>problem flavor</th></tr>
+<tr><td>hyperbolic</td><td>\(u_{tt} = v^2 u_{xx}\)</td><td>wave</td><td>initial-value: march forward in time</td></tr>
+<tr><td>parabolic</td><td>\(u_t = \partial_x(D\,u_x)\)</td><td>diffusion</td><td>initial-value, smoothing</td></tr>
+<tr><td>elliptic</td><td>\(u_{xx} + u_{yy} = \rho(x,y)\)</td><td>Poisson</td><td>boundary-value: solve everywhere at once</td></tr>
+</table>
+<p>Finite differences on a grid turn all three into (sparse) linear algebra — initial-value problems
+march like ODEs; boundary-value problems become one big Lecture-2 solve. Robotics sightings:
+potential-field planners solve Poisson-like problems; mapping/diffusion models are parabolic.</p>
+
+<h2 id="summary">12 · Summary</h2>
+<ul>
+<li>Quadrature = integrate the interpolant: chords give order 2, parabolas order 4, and symmetric rules get a free extra degree.</li>
+<li>Smooth error series ⇒ extrapolate to h = 0: Romberg (integrals) and Bulirsch–Stoer (ODEs) get many digits from few evaluations.</li>
+<li>Improper ≠ impossible — substitute until the integrand is tame (x → 1/t, tanh rule).</li>
+<li>Any ODE → first-order system. RK4 is the default; adaptive step control (even PI-controlled) is where the real efficiency lives.</li>
+<li>Stiffness: stability, not accuracy, limits h — a decayed fast mode still constrains every explicit step. Go implicit.</li>
+</ul>
+<table>
+<tr><th>method</th><th>one-line idea</th><th>order</th><th>use it when</th></tr>
+<tr><td>trapezoid / midpoint</td><td>chord / center value per panel</td><td>2</td><td>quick, or building block for Romberg</td></tr>
+<tr><td>Simpson</td><td>parabola per panel pair</td><td>4</td><td>smooth integrands, cheap accuracy</td></tr>
+<tr><td>Romberg</td><td>trapezoid + h²-series extrapolation</td><td>rising</td><td>smooth f, many digits</td></tr>
+<tr><td>Gauss</td><td>optimal nodes and weights</td><td>2n−1 exact</td><td>f expensive, smooth, fixed budget</td></tr>
+<tr><td>Euler</td><td>one slope, trust it</td><td>1</td><td>never for production — the baseline</td></tr>
+<tr><td>RK4</td><td>four slopes, 1:2:2:1</td><td>4</td><td>the generic ODE workhorse</td></tr>
+<tr><td>adaptive RK</td><td>step doubling / PI step control</td><td>4–5</td><td>dynamics vary along the way</td></tr>
+<tr><td>Bulirsch–Stoer</td><td>midpoint runs + extrapolation</td><td>very high</td><td>smooth f, high precision</td></tr>
+<tr><td>implicit (BE, etc.)</td><td>solve for the end-of-step state</td><td>1+</td><td>stiff systems</td></tr>
+</table>
+
+<details><summary>⚠️ Typos in the slides to watch out for</summary><div class="body"><ul>
+<li>Slide 6 title "Basic use of Simpson's rule" — the first formula shown is the <b>trapezoid</b> rule (Newton–Cotes degree 1); Simpson follows after.</li>
+<li>Slide 8: extended-trapezoid error written O((x_N−x_0)f″/N²) — should be O(<b>(x_N−x_0)³</b> f″/N²) (equivalently (b−a)h²f″/12).</li>
+<li>Slide 11: h = (a−b)/N → (b−a)/N; and the title says Simpson but Euler–Maclaurin is the trapezoid's error series.</li>
+<li>Slide 21: "motion of a mass when actuated by a <b>mass</b>" → by a force.</li>
+<li>Slide 31: y(n_n + H) → y(x_n + H); in the recursion z_{m+1} = z_{m−1} + 2hf(x_n + mh, z_<b>m</b>) (slide has z_n).</li>
+<li>Slide 32: the newer step sequence should read n = 2, 4, 6, 8, 10, 12, … (n_j = 2(j+1)); the slide's list "2, 3, 6, 8…" is garbled.</li>
+<li>Slide 33: the extrapolation recursion as printed ((2T_{k,j} − T_{k−1,j})/(ratio²−1)) doesn't reproduce (4y_n − y_{n/2})/3; the standard form is T_{k,j+1} = T_{k,j} + (T_{k,j} − T_{k−1,j})/((n_k/n_{k−j})² − 1).</li>
+<li>Spelling: "Runga-Kutta", "Burlirsch"/"Buerlirsch-Stoer" → Runge-Kutta, Bulirsch–Stoer.</li>
+</ul></div></details>
+
+<details><summary>🧠 Self-check questions</summary><div class="body">
+<details><summary>1 · Simpson fits parabolas. Why is it exact for cubics too?</summary><div class="body">Over a symmetric panel the cubic term's error is an odd function around the center — it integrates to zero. Symmetry buys one free degree; that's the h⁵ in the error.</div></details>
+<details><summary>2 · Romberg and Bulirsch–Stoer share one trick. What is it, and what does it require?</summary><div class="body">The error is a clean series in h² (Euler–Maclaurin for trapezoid; centered midpoint for ODEs), so answers at several h can be extrapolated to h = 0. It requires smoothness — tables, kinks, and singularities break the series, which is exactly the slides' warning list for B-S.</div></details>
+<details><summary>3 · Why does forward Euler make the pendulum gain energy rather than lose it?</summary><div class="body">Each step moves along the tangent of the circular orbit — a chord that lands slightly <em>outside</em> the circle, every single step. The radius (energy) can only ratchet up. RK4's probes cancel that bias to 4th order.</div></details>
+<details><summary>4 · Your drone sim is stable at h = 1 ms but explodes at 2.5 ms, long after all transients die. Stiff or inaccurate?</summary><div class="body">Stiff: explosion at a sharp h threshold independent of visible dynamics is a stability cliff (some fast mode has |1+hλ| crossing 1), not an accuracy problem. Accuracy degrades gradually; stability fails totally. Switch to an implicit integrator or shrink h.</div></details>
+<details><summary>5 · ∫₀¹ x^(−1/2) dx: why does the midpoint rule survive where the trapezoid dies, and what's the better fix?</summary><div class="body">Midpoint never evaluates the endpoints, so it never touches 1/√0 — it converges, slowly. The better fix is the tanh (or 1/t) substitution, which makes the transformed integrand smooth and gives fast convergence.</div></details>
+<details><summary>6 · Why is step-size control described as a PI controller — what are the "P" and "I" reacting to?</summary><div class="body">P: the current step's error estimate (err_nᵅ) — react now. I: the previous error (err_{n−1}^β) — a memory that damps oscillating grow/shrink cycles in h. The solver is literally a plant being controlled.</div></details>
+</div></details>
+
+<div class="prevnext"><a href="lec6.html">← Lecture 6: Optimization</a><a href="lec8.html">Lecture 8: Subspace Methods →</a></div>
+
+</div></main>
+</div>
+</body></html>
