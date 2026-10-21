@@ -1,0 +1,56 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Kriging Explorer</title>
+<style>
+:root{--bg:#fff;--fg:#1f2937;--mut:#6b7280;--grid:#e5e7eb;--card:#f9fafb;--band:rgba(107,114,128,.25)}
+@media (prefers-color-scheme:dark){:root{--bg:#191919;--fg:#e5e7eb;--mut:#9ca3af;--grid:#2f2f2f;--card:#222;--band:rgba(156,163,175,.25)}}
+body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.4 -apple-system,Segoe UI,Helvetica,Arial,sans-serif}
+.wrap{padding:12px 16px;max-width:860px}
+.row{display:grid;grid-template-columns:minmax(150px,auto) 1fr 52px;gap:10px;align-items:center;margin:4px 0}
+input[type=range]{width:100%}
+canvas{width:100%;height:auto;border-radius:10px;background:var(--card);touch-action:none;display:block;margin-top:8px}
+button{border:1px solid var(--grid);background:var(--card);color:var(--fg);border-radius:8px;padding:5px 10px;cursor:pointer;font:inherit}
+.hint{color:var(--mut);font-size:12.5px;margin-top:6px}
+</style></head><body><div class="wrap">
+<div class="row"><span><b>s</b> — bump width (how far each point's influence reaches)</span><input type="range" id="l" min="0.03" max="0.4" step="0.005" value="0.12"><span id="lv"></span></div>
+<div class="row"><span><b>λ</b> — noise / regularization (how much to trust each point)</span><input type="range" id="n" min="-4" max="0" step="0.05" value="-3"><span id="nv"></span></div>
+<div style="display:flex;gap:8px;margin-top:6px"><button id="clr">Clear points</button><button id="rst">Reset example</button></div>
+<canvas id="c" width="840" height="380"></canvas>
+<div class="hint">Click to add a measurement, drag to move, double-click to delete. Green = best guess, gray = where it's unsure (±2σ). Small s → wiggly, unsure between points. Big λ → the curve stops passing exactly through the dots (smoothing instead of interpolating).</div>
+</div>
+<script>
+const cv=document.getElementById('c'),ctx=cv.getContext('2d');const X0=-0.1,X1=1.1,Y0=-0.6,Y1=1.6;
+let pts=[];const ex=[[0,.1],[.16,.2],[.32,.8],[.5,.6],[.63,.3],[.8,.86],[1,.7]];
+function css(v){return getComputedStyle(document.documentElement).getPropertyValue(v).trim()}
+const sx=x=>(x-X0)/(X1-X0)*cv.width,sy=y=>cv.height-(y-Y0)/(Y1-Y0)*cv.height,ix=p=>X0+p/cv.width*(X1-X0),iy=p=>Y0+(cv.height-p)/cv.height*(Y1-Y0);
+function solve(A,b){const n=b.length,M=A.map((r,i)=>[...r,b[i]]);for(let c=0;c<n;c++){let p=c;for(let r=c+1;r<n;r++)if(Math.abs(M[r][c])>Math.abs(M[p][c]))p=r;[M[c],M[p]]=[M[p],M[c]];
+ for(let r=c+1;r<n;r++){const f=M[r][c]/M[c][c];for(let k=c;k<=n;k++)M[r][k]-=f*M[c][k]}}const x=new Array(n);for(let i=n-1;i>=0;i--){let s=M[i][n];for(let k=i+1;k<n;k++)s-=M[i][k]*x[k];x[i]=s/M[i][i]}return x}
+function draw(){
+ const l=+document.getElementById('l').value,lam=Math.pow(10,+document.getElementById('n').value);
+ document.getElementById('lv').textContent=l.toFixed(2);document.getElementById('nv').textContent=lam<0.01?lam.toExponential(0):lam.toFixed(2);
+ ctx.clearRect(0,0,cv.width,cv.height);ctx.strokeStyle=css('--grid');ctx.lineWidth=1;
+ for(let y=-0.5;y<=1.5;y+=0.5){ctx.beginPath();ctx.moveTo(0,sy(y));ctx.lineTo(cv.width,sy(y));ctx.stroke()}
+ const k=(a,b)=>Math.exp(-(a-b)*(a-b)/(2*l*l)),mu=0.5,amp=0.3,n=pts.length;
+ const xs=[],m=[],sd=[];
+ let alpha=[],Kinv=null;
+ if(n){const K=pts.map(p=>pts.map(q=>k(p[0],q[0])));for(let i=0;i<n;i++)K[i][i]+=lam;alpha=solve(K,pts.map(p=>p[1]-mu));
+  Kinv=K}
+ for(let px=0;px<=cv.width;px+=3){const x=ix(px);xs.push(px);
+  if(!n){m.push(mu);sd.push(amp);continue}
+  const ks=pts.map(p=>k(x,p[0]));m.push(mu+ks.reduce((s,v,i)=>s+v*alpha[i],0));
+  const v=solve(Kinv,ks);sd.push(amp*Math.sqrt(Math.max(0,1-ks.reduce((s,q,i)=>s+q*v[i],0))))}
+ ctx.fillStyle=css('--band');ctx.beginPath();xs.forEach((px,i)=>i?ctx.lineTo(px,sy(m[i]+2*sd[i])):ctx.moveTo(px,sy(m[i]+2*sd[i])));
+ for(let i=xs.length-1;i>=0;i--)ctx.lineTo(xs[i],sy(m[i]-2*sd[i]));ctx.closePath();ctx.fill();
+ ctx.strokeStyle='#16a34a';ctx.lineWidth=3;ctx.beginPath();xs.forEach((px,i)=>i?ctx.lineTo(px,sy(m[i])):ctx.moveTo(px,sy(m[i])));ctx.stroke();
+ for(const p of pts){ctx.fillStyle='#dc2626';ctx.beginPath();ctx.arc(sx(p[0]),sy(p[1]),7,0,7);ctx.fill();ctx.strokeStyle=css('--bg');ctx.lineWidth=2;ctx.stroke()}
+}
+function pos(e){const r=cv.getBoundingClientRect();return[(e.clientX-r.left)*cv.width/r.width,(e.clientY-r.top)*cv.height/r.height]}
+const hit=(px,py)=>pts.findIndex(p=>Math.hypot(sx(p[0])-px,sy(p[1])-py)<14);let d=-1;
+cv.addEventListener('pointerdown',e=>{const[px,py]=pos(e);d=hit(px,py);if(d<0){pts.push([ix(px),iy(py)]);d=pts.length-1;draw()}cv.setPointerCapture(e.pointerId)});
+cv.addEventListener('pointermove',e=>{if(d<0)return;const[px,py]=pos(e);pts[d]=[ix(px),Math.max(Y0,Math.min(Y1,iy(py)))];draw()});
+cv.addEventListener('pointerup',()=>d=-1);
+cv.addEventListener('dblclick',e=>{const[px,py]=pos(e);const i=hit(px,py);if(i>=0){pts.splice(i,1);draw()}});
+document.getElementById('l').oninput=draw;document.getElementById('n').oninput=draw;
+document.getElementById('clr').onclick=()=>{pts=[];draw()};document.getElementById('rst').onclick=()=>{pts=ex.map(p=>p.slice());draw()};
+pts=ex.map(p=>p.slice());draw();
+</script><script>const __post=()=>parent.postMessage({demoHeight:document.body.scrollHeight+8},'*');addEventListener('load',__post);new ResizeObserver(__post).observe(document.body);</script></body></html>

@@ -1,0 +1,172 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Lecture 3 — Interpolation | Math for Robotics</title>
+<link rel="stylesheet" href="assets/site.css">
+<link rel="stylesheet" href="vendor/katex/katex.min.css">
+<script defer src="vendor/katex/katex.min.js"></script>
+<script defer src="vendor/katex/auto-render.min.js"></script>
+<script defer src="assets/site.js"></script>
+</head><body>
+<div class="layout">
+<main><div class="content">
+
+<h1>Lecture 3: Interpolation</h1>
+
+<div class="callout summary"><span class="tag">The one-sentence version:</span>
+interpolation fills the gaps between your samples with a function you can evaluate anywhere —
+and the craft is choosing how much that function is allowed to bend: straight lines, one big
+polynomial (dangerous), stitched cubics (the workhorse), or a stochastic model that also tells
+you how unsure it is.
+<br><span class="small muted">CSE 276C, Lecture 3 · Prof. Henrik Christensen · Numerical Recipes ch. 3, Math for ML ch. 9.
+All numbers verified in <code>scripts/lec3/verify.py</code>. This is the theory behind
+<a href="hw2.html">HW2</a>.</span></div>
+
+<div class="toc"><b>Contents</b><ol>
+<li><a href="#why">Model-based vs data-driven</a></li>
+<li><a href="#linear">Linear interpolation</a></li>
+<li><a href="#lagrange">Lagrange: one polynomial through everything</a></li>
+<li><a href="#spline">Cubic splines</a></li>
+<li><a href="#multi">Multi-variate: bilinear</a></li>
+<li><a href="#kriging">Kriging / Gaussian process regression</a></li>
+<li><a href="#summary">Summary</a></li>
+</ol></div>
+
+<h2 id="big">The big picture</h2>
+<p>Lecture 2 solved for exact unknowns; this lecture builds <em>functions</em> from samples — and
+every method here is secretly a Lecture-2 linear solve (Vandermonde, tridiagonal, normal
+equations). It's also exactly the toolbox <a href="hw2.html">HW2</a> grades you on.</p>
+<table>
+<tr><th>robotics problem</th><th>what you have</th><th>what you need</th><th>method</th></tr>
+<tr><td>trajectory upsampling (HW2!)</td><td>waypoints at 1 Hz</td><td>poses at 30 Hz</td><td>linear / spline on x(t), y(t)</td></tr>
+<tr><td>reading a sensor between pixels</td><td>a grid of values</td><td>value at any (x, y)</td><td>bilinear</td></tr>
+<tr><td>battery / terrain / signal maps</td><td>sparse noisy measurements</td><td>a map <em>with uncertainty</em></td><td>kriging (GP)</td></tr>
+<tr><td>smooth joint trajectories</td><td>via-points</td><td>a curve with bounded curvature</td><td>cubic splines</td></tr>
+</table>
+
+<h2 id="why">1 · Model-based vs data-driven</h2>
+<p>Two regimes (slides): <b>model-based</b> — domain knowledge supplies the function family
+(battery recharge curves, drive-train dynamics, grasp material models); <b>data-driven</b> — all
+you have is samples and maybe constraints (driving in traffic, painting). This lecture is the
+data-driven toolkit. The theoretical safety net is the <b>Weierstrass approximation theorem</b>:
+every continuous f on [a, b] can be approximated arbitrarily well by <em>some</em> polynomial.
+Wonderful — except it names no strategy for finding it, and the obvious strategy goes wrong
+(Section 3).</p>
+
+<h2 id="linear">2 · Linear interpolation: the baseline</h2>
+$$p(x) = f(x_i) + \frac{f(x_{i+1}) - f(x_i)}{x_{i+1} - x_i}\,(x - x_i),
+\qquad x \in [x_i, x_{i+1}]$$
+<p>Equivalently \(y = Ay_j + By_{j+1}\) with \(A = \frac{x_{j+1}-x}{x_{j+1}-x_j}\), \(B = 1-A\) —
+weights that fade linearly from one neighbor to the other (a 2-point special case of Lagrange).
+Continuous, local, monotone, cheap; kinked at every sample, and it cuts every corner
+(<a href="hw2.html">HW2</a> measures exactly how much).</p>
+
+<h2 id="lagrange">3 · Lagrange: one polynomial through everything</h2>
+<p>n+1 points determine a unique degree-n polynomial. The direct route — solve
+\(V a = y\) for coefficients of \(a_0 + a_1x + \dots\) — builds the <b>Vandermonde matrix</b>,
+and it is numerically rotten:</p>
+<figure><img src="figures/lec3/01_vandermonde.svg" alt="Vandermonde conditioning" width="760">
+<figcaption>Fig 1 — cond(V) measured: ~10¹⁶ by n = 20. Lecture 2's condition-number lesson, live.</figcaption></figure>
+<p>Lagrange's form writes the same polynomial without ever solving a system:</p>
+$$p(x) = \sum_{k=0}^n y_k L_k(x), \qquad
+L_k(x) = \prod_{i \ne k} \frac{x - x_i}{x_k - x_i}, \qquad L_k(x_i) = \delta_{ik}$$
+<table>
+<tr><th>symbol</th><th>meaning</th></tr>
+<tr><td>\(L_k\)</td><td>a "switch" polynomial: 1 at its own point, 0 at every other</td></tr>
+<tr><td>\(y_k L_k\)</td><td>each data point contributes itself, switched on only near home</td></tr>
+</table>
+<details open><summary>Worked example: the slides' (x−1)² recovery (click to close)</summary><div class="body">
+<p>Points (0, 1), (1, 0): p(x) = 1·L₀ = \(\frac{x-1}{0-1}\) = −x + 1 — a line, exact at both points.
+Add (−1, 4): now L₀ = −(x−1)(x+1), L₁ = "don't care" (its y is 0), L₂ = ½x(x−1), and</p>
+$$p(x) = -(x-1)(x+1) + 4\cdot\tfrac12 x(x-1) = (x-1)(-x-1+2x) = (x-1)^2 \;✓$$
+<p>Three samples of a parabola reproduce the parabola exactly — interpolation is exact when the
+truth is in the family. Verified.</p></div></details>
+<div class="callout gotcha"><span class="tag">⚠️ The slides' warning, quantified:</span>
+"meandering between data points can become significant." One global polynomial must wiggle through
+<em>everything</em> — with many or uneven points the swings grow (Runge's phenomenon, revisited
+properly in <a href="lec4.html">Lecture 4</a>).</div>
+<p class="try">🕹️ <b>Try it:</b> add points and watch the red polynomial start to swing while the green spline stays calm. "Load Runge example" is the classic failure.</p>
+<div class="demo-wrap"><iframe class="demo" src="demos/lec3/interpolation_explorer.html" height="620" title="Interpolation explorer"></iframe></div>
+
+<h2 id="spline">4 · Cubic splines: stitched, not stretched</h2>
+<p>Why cubics? Demand the 4th derivative be zero on each piece and you get the lowest-degree
+polynomial that can still match value <em>and</em> curvature at both ends:
+\(f = \frac{c_1}{6}x^3 + \frac{c_2}{2}x^2 + c_3x + c_4\) per interval. Numerical Recipes' form
+extends linear interpolation with a curvature correction:</p>
+$$y = Ay_j + By_{j+1} + Cy''_j + Dy''_{j+1}, \qquad
+C = \tfrac16(A^3 - A)h^2, \quad D = \tfrac16(B^3 - B)h^2$$
+<p>The \(y''_j\) are chosen so slopes match across every knot — a <b>tridiagonal</b> system
+(each knot only talks to its neighbors), solved in O(n). Verified against scipy to 10⁻¹⁶.</p>
+<div class="callout insight"><span class="tag">💡 Why robots love splines:</span> curvature ≈
+acceleration. A spline joint trajectory has continuous velocity and acceleration — no actuator
+spikes at the via-points — and each sample only influences its neighborhood, unlike Lagrange where
+one bad sample pollutes the whole curve.</div>
+
+<h2 id="multi">5 · Multi-variate: bilinear interpolation</h2>
+<p>On a grid (images, lidar heightmaps, cost maps), interpolate inside a cell from its 4 corners:</p>
+$$y(x_1, x_2) = (1-t)(1-u)\,y_0 + t(1-u)\,y_1 + tu\,y_2 + (1-t)u\,y_3$$
+<p>with t, u the fractional positions in the cell. The weights are the <em>areas of the opposite
+rectangles</em>, they always sum to 1, and the formula is exact for planes (verified).</p>
+<p class="try">🕹️ <b>Try it:</b> drag the ★; each corner's weight is the area of the rectangle diagonally opposite it.</p>
+<div class="demo-wrap"><iframe class="demo" src="demos/lec3/bilinear_explorer.html" height="520" title="Bilinear explorer"></iframe></div>
+
+<h2 id="kriging">6 · Kriging: interpolation that knows its own uncertainty</h2>
+<p>Treat the data as samples of a stochastic process and estimate the most likely function —
+"Gaussian process regression" (the slides' spelling "Kringing" is a typo that stuck). Model
+f as a weighted sum of basis functions:</p>
+$$f(x) = \sum_i w_i\,\phi_i(x) = \vec w\,\Phi(\vec x)
+\qquad \phi_i:\; \text{polynomial } x^i \;\big/\; \text{Gaussian } e^{-(x-x_i)^2/2s} \;\big/\; \text{sigmoid}$$
+<p>Maximum likelihood with Gaussian noise ⟹ least squares (Lecture 2 again):</p>
+$$w_{ML} = (\Phi^T\Phi)^{-1}\Phi^T\vec y
+\qquad\xrightarrow{\;\text{regularize}\;}\qquad
+w = (\lambda I + \Phi^T\Phi)^{-1}\Phi^T\vec y$$
+<table>
+<tr><th>knob</th><th>what it does</th></tr>
+<tr><td>s (bump width)</td><td>how far each measurement's influence reaches — small s: wiggly and unsure between points</td></tr>
+<tr><td>λ (regularization / noise)</td><td>how much to trust each point — λ &gt; 0 stops exact interpolation and starts smoothing (verified: λ = 0.3 leaves 0.18 residuals at the data)</td></tr>
+<tr><td>the variance band</td><td>the model's own confidence — tight at data, wide in gaps (the slides' California maps: prediction map + variance map)</td></tr>
+</table>
+<p class="try">🕹️ <b>Try it:</b> add and drag measurements; shrink s to see uncertainty balloon between points; raise λ to watch the curve stop passing through the dots.</p>
+<div class="demo-wrap"><iframe class="demo" src="demos/lec3/kriging_explorer.html" height="560" title="Kriging explorer"></iframe></div>
+<div class="callout insight"><span class="tag">💡 Why robots care:</span> the variance band is a
+plan: "measure next where I'm most unsure" — the heart of informative-path-planning and of the
+fire-monitoring coverage example from Lecture 6. Interpolators that only give a value can't say that.</div>
+
+<h2 id="summary">7 · Summary</h2>
+<ul>
+<li>Interpolation = exact at samples; approximation = close everywhere (Lecture 4's subject). Weierstrass promises a good polynomial exists; it doesn't say the interpolating one is it.</li>
+<li>Never solve the Vandermonde system; use the Lagrange/barycentric form — and fear global polynomials on many points.</li>
+<li>Cubic splines: linear interpolation + curvature correction, tridiagonal O(n) solve, local and smooth — the default.</li>
+<li>Bilinear: 4 corners, opposite-area weights, exact for planes.</li>
+<li>Kriging/GP: ML fitting of basis functions; λ trades interpolation for smoothing; you get error bars for free.</li>
+</ul>
+<table>
+<tr><th>method</th><th>one-line idea</th><th>use it when</th></tr>
+<tr><td>linear</td><td>chord between neighbors</td><td>dense data, baseline, hard real-time</td></tr>
+<tr><td>Lagrange</td><td>one exact polynomial</td><td>few, well-placed points (≤ ~8)</td></tr>
+<tr><td>cubic spline</td><td>stitched cubics, matched curvature</td><td>smooth trajectories, the default</td></tr>
+<tr><td>bilinear</td><td>opposite-area corner weights</td><td>grids: images, heightmaps, lookup tables</td></tr>
+<tr><td>kriging / GP</td><td>stochastic fit + uncertainty</td><td>sparse noisy data, exploration planning</td></tr>
+</table>
+
+<details><summary>⚠️ Typos in the slides to watch out for</summary><div class="body"><ul>
+<li>Throughout: "<b>Kringing</b>" → Kriging (after D. G. Krige).</li>
+<li>Slide 11: in \(L_k(x) = \prod\) the condition reads "i = 0, i ≠ <b>j</b>" → i ≠ <b>k</b>; and "y_kL_k(x_k) = y_kL_k(x)" should read p(x_k) = y_k (the δ_ik line below it is the real statement).</li>
+<li>Slide 14: "L₁ = Don't care" is correct but only because a₁ = 0 — the slide's a-values are the y-values (a₀=1, a₁=0, a₂=4), a notation collision with the polynomial coefficients a_i from slide 9.</li>
+<li>Slide 32: regularized solution "(λ + ΦᵀΦ)⁻¹" → (λ<b>I</b> + ΦᵀΦ)⁻¹.</li>
+<li>Slide 19: C and D carry (x_{j+1} − x_j)² — the h² of the <em>current interval</em>; easy to mis-code with non-uniform knots.</li>
+</ul></div></details>
+
+<details><summary>🧠 Self-check questions</summary><div class="body">
+<details><summary>1 · Interpolation vs approximation — and which does HW2's Q1 ask for?</summary><div class="body">Interpolation passes exactly through the samples (what HW2 wants between kept waypoints); approximation minimizes error overall without hitting points (Lecture 4, and HW2-Q2's table bounds). Noisy data usually deserves approximation — hitting noise exactly is memorizing it.</div></details>
+<details><summary>2 · Why is solving V·a = y bad but evaluating the Lagrange form fine, if they're the same polynomial?</summary><div class="body">The polynomial is the same; the <em>arithmetic</em> isn't. V's columns (1, x, x², …) become nearly parallel — condition 10¹⁶ by n = 20 — so the coefficient solve amplifies rounding catastrophically. Lagrange/barycentric evaluates without ever forming that system.</div></details>
+<details><summary>3 · Why does each spline knot only need to "talk" to its neighbors, and what does that buy?</summary><div class="body">Continuity of slope at knot j involves only y″ at j−1, j, j+1 — hence a tridiagonal system, O(n) to solve, and locality: moving one point only reshapes nearby pieces (drag a point in the demo and watch).</div></details>
+<details><summary>4 · Your bilinear-sampled cost map shows diamond-shaped artifacts along cell diagonals. Why?</summary><div class="body">Bilinear is linear along rows and columns but <em>quadratic</em> (tu term) along diagonals, and its gradient jumps at cell edges. The artifacts are those derivative kinks; bicubic interpolation (the 2-D spline analogue) smooths them.</div></details>
+<details><summary>5 · In the kriging demo, what happens to the variance band at an isolated data point as λ grows, and why is that honest?</summary><div class="body">The band no longer pinches to zero at the point — λ says "measurements are noisy", so even <em>at</em> a sample the model keeps residual uncertainty. Exact interpolation of noisy data would be false confidence.</div></details>
+</div></details>
+
+<div class="prevnext"><a href="lec2.html">← Lecture 2: Linear Systems</a><a href="lec4.html">Lecture 4: Function Approximation →</a></div>
+
+</div></main>
+</div>
+</body></html>

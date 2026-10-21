@@ -1,0 +1,56 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Bilinear Explorer</title>
+<style>
+:root{--bg:#fff;--fg:#1f2937;--mut:#6b7280;--grid:#e5e7eb;--card:#f9fafb}
+@media (prefers-color-scheme:dark){:root{--bg:#191919;--fg:#e5e7eb;--mut:#9ca3af;--grid:#2f2f2f;--card:#222}}
+body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.4 -apple-system,Segoe UI,Helvetica,Arial,sans-serif}
+.wrap{padding:12px 16px;display:flex;flex-wrap:wrap;gap:18px;align-items:flex-start}
+canvas{width:340px;max-width:100%;height:auto;border-radius:10px;touch-action:none;cursor:crosshair}
+.panel{min-width:250px;flex:1}
+.c{display:grid;grid-template-columns:52px 1fr 40px;gap:6px;align-items:center;margin:4px 0}
+input[type=range]{width:100%}
+table{border-collapse:collapse;margin-top:8px;width:100%;font-variant-numeric:tabular-nums}
+td{padding:3px 6px;border-bottom:1px solid var(--grid)}
+.big{font-size:18px;font-weight:700;margin-top:8px}
+.hint{color:var(--mut);font-size:12.5px}
+</style></head><body><div class="wrap">
+<canvas id="c" width="400" height="400"></canvas>
+<div class="panel">
+ <div class="hint">Drag the ★ around the square. Use the sliders to change the 4 corner values (think: 4 neighboring pixels' brightness).</div>
+ <div class="c"><b style="color:#ea580c">y₀</b><input type="range" id="y0" min="0" max="10" step="0.1" value="1"><span id="v0"></span></div>
+ <div class="c"><b style="color:#dc2626">y₁</b><input type="range" id="y1" min="0" max="10" step="0.1" value="8"><span id="v1"></span></div>
+ <div class="c"><b style="color:#2563eb">y₂</b><input type="range" id="y2" min="0" max="10" step="0.1" value="4"><span id="v2"></span></div>
+ <div class="c"><b style="color:#16a34a">y₃</b><input type="range" id="y3" min="0" max="10" step="0.1" value="6"><span id="v3"></span></div>
+ <table id="tb"></table>
+ <div class="big" id="res"></div>
+</div></div>
+<script>
+const cv=document.getElementById('c'),ctx=cv.getContext('2d');let t=0.65,u=0.35;
+const M=40,S=cv.width-2*M;const cols=['#ea580c','#dc2626','#2563eb','#16a34a'];
+const Y=()=>[0,1,2,3].map(i=>+document.getElementById('y'+i).value);
+function shade(v){const a=v/10;return `rgb(${Math.round(255-a*200)},${Math.round(255-a*120)},${Math.round(255-a*20)})`}
+function draw(){
+ const y=Y();[0,1,2,3].forEach(i=>document.getElementById('v'+i).textContent=y[i].toFixed(1));
+ ctx.clearRect(0,0,cv.width,cv.height);
+ const N=40;for(let i=0;i<N;i++)for(let j=0;j<N;j++){const a=(i+.5)/N,b=(j+.5)/N;
+  const v=(1-a)*(1-b)*y[0]+a*(1-b)*y[1]+a*b*y[2]+(1-a)*b*y[3];ctx.fillStyle=shade(v);ctx.fillRect(M+i*S/N,M+S-(j+1)*S/N,S/N+1,S/N+1)}
+ const px=M+t*S,py=M+S-u*S;
+ ctx.setLineDash([4,4]);ctx.strokeStyle='rgba(0,0,0,.45)';ctx.beginPath();ctx.moveTo(px,M);ctx.lineTo(px,M+S);ctx.moveTo(M,py);ctx.lineTo(M+S,py);ctx.stroke();ctx.setLineDash([]);
+ ctx.strokeStyle='#111';ctx.lineWidth=2;ctx.strokeRect(M,M,S,S);
+ const cs=[[0,0],[1,0],[1,1],[0,1]];
+ cs.forEach((c,i)=>{ctx.fillStyle=cols[i];ctx.beginPath();ctx.arc(M+c[0]*S,M+S-c[1]*S,11,0,7);ctx.fill();ctx.fillStyle='#fff';ctx.font='bold 11px sans-serif';ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText('y'+i,M+c[0]*S,M+S-c[1]*S)});
+ ctx.font='28px sans-serif';ctx.fillStyle='#111';ctx.fillText('★',px,py);
+ const w=[(1-t)*(1-u),t*(1-u),t*u,(1-t)*u];const v=w.reduce((s,wi,i)=>s+wi*y[i],0);
+ const names=['(1−t)(1−u)','t(1−u)','t·u','(1−t)u'];
+ document.getElementById('tb').innerHTML=`<tr><td colspan=4>t = ${t.toFixed(2)}, u = ${u.toFixed(2)}</td></tr>`+
+  w.map((wi,i)=>`<tr><td style="color:${cols[i]}"><b>y${i}</b></td><td>${names[i]}</td><td>= ${wi.toFixed(3)}</td><td>× ${y[i].toFixed(1)}</td></tr>`).join('')+
+  `<tr><td></td><td>weights sum</td><td>= ${w.reduce((a,b)=>a+b).toFixed(3)}</td><td></td></tr>`;
+ document.getElementById('res').textContent=`y(x₁,x₂) = ${v.toFixed(2)}`;
+}
+function set(e){const r=cv.getBoundingClientRect();const x=(e.clientX-r.left)*cv.width/r.width,yy=(e.clientY-r.top)*cv.height/r.height;
+ t=Math.max(0,Math.min(1,(x-M)/S));u=Math.max(0,Math.min(1,(M+S-yy)/S));draw()}
+let d=false;cv.addEventListener('pointerdown',e=>{d=true;cv.setPointerCapture(e.pointerId);set(e)});
+cv.addEventListener('pointermove',e=>{if(d)set(e)});cv.addEventListener('pointerup',()=>d=false);
+[0,1,2,3].forEach(i=>document.getElementById('y'+i).oninput=draw);draw();
+</script><script>const __post=()=>parent.postMessage({demoHeight:document.body.scrollHeight+8},'*');addEventListener('load',__post);new ResizeObserver(__post).observe(document.body);</script></body></html>
