@@ -7,7 +7,7 @@
     { href: 'lec1.html', title: '1 · Transformations' },
     { href: 'lec2.html', title: '2 · Linear Systems' },
     { href: 'lec3.html', title: '3 · Interpolation' },
-    { href: 'lec4.html', title: '4 · Function Approximation', soon: true },
+    { href: 'lec4.html', title: '4 · Function Approximation' },
     { href: 'lec5.html', title: '5 · Root Finding' },
     { href: 'lec6.html', title: '6 · Optimization' },
     { href: 'lec7.html', title: '7 · Integration & ODEs' },

@@ -1,0 +1,47 @@
+<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Chebyshev Node Explorer</title>
+<style>
+:root{--bg:#fff;--fg:#1f2937;--mut:#6b7280;--grid:#e5e7eb;--card:#f9fafb}
+@media (prefers-color-scheme:dark){:root{--bg:#191919;--fg:#e5e7eb;--mut:#9ca3af;--grid:#333;--card:#222}}
+body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.4 -apple-system,Segoe UI,Helvetica,Arial,sans-serif}
+.w{padding:12px 16px;max-width:900px}.row{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:4px 0}
+.seg button{border:1px solid var(--grid);background:var(--card);color:var(--fg);padding:5px 10px;cursor:pointer;font:inherit}
+.seg button:first-child{border-radius:8px 0 0 8px}.seg button:last-child{border-radius:0 8px 8px 0}.seg button.on{background:#2563eb;color:#fff;border-color:#2563eb}
+select{font:inherit;padding:4px;border-radius:8px;background:var(--card);color:var(--fg);border:1px solid var(--grid)}
+input[type=range]{flex:1;min-width:140px}canvas{width:100%;height:auto;border-radius:10px;background:var(--card);display:block;margin-top:8px}
+#s{font-weight:700;margin-top:6px}.h{color:var(--mut);font-size:12.5px;margin-top:6px}
+</style></head><body><div class="w">
+<div class="row"><span>Points N</span><input type="range" id="n" min="3" max="31" step="1" value="11"><b id="nv"></b></div>
+<div class="row"><div class="seg"><button id="eq">Evenly spaced</button><button id="ch" class="on">Chebyshev</button></div>
+<span>Function</span><select id="f"><option value="r">Runge 1/(1+25x²)</option><option value="e">eˣ</option><option value="a">|x|</option><option value="s">sin(6x)</option></select></div>
+<div id="s"></div>
+<canvas id="c" width="860" height="380"></canvas>
+<div class="h">Top strip: the half-circle trick — equal angles, dropped straight down, give the Chebyshev points. Main plot: black = true function, colored = the one polynomial through the blue points. Slide N up with evenly spaced points on Runge and watch the ends explode; switch to Chebyshev and they calm down.</div>
+</div><script>
+const $=i=>document.getElementById(i),cv=$('c'),ctx=cv.getContext('2d');let cheb=true;
+const css=v=>getComputedStyle(document.documentElement).getPropertyValue(v).trim();
+const F={r:x=>1/(1+25*x*x),e:Math.exp,a:Math.abs,s:x=>Math.sin(6*x)};
+function nodes(n,c){const xs=[];for(let k=0;k<n;k++)xs.push(c?-Math.cos(Math.PI*(k+.5)/n):-1+2*k/(n-1));return xs}
+function interp(xs,ys){const n=xs.length,w=xs.map((xj,j)=>{let p=1;for(let k=0;k<n;k++)if(k!==j)p*=xj-xs[k];return 1/p});
+ return x=>{let num=0,den=0;for(let j=0;j<n;j++){const d=x-xs[j];if(Math.abs(d)<1e-14)return ys[j];const t=w[j]/d;num+=t*ys[j];den+=t}return num/den}}
+function maxerr(f,n,c){const xs=nodes(n,c),p=interp(xs,xs.map(f));let m=0;for(let i=0;i<=1000;i++){const x=-1+i/500;m=Math.max(m,Math.abs(f(x)-p(x)))}return m}
+function draw(){const n=+$('n').value,f=F[$('f').value];$('nv').textContent=n;
+ const xs=nodes(n,cheb),p=interp(xs,xs.map(f));const W=cv.width,H=cv.height,L=40,R=12,top=90,B=26;
+ let lo=Infinity,hi=-Infinity;for(let i=0;i<=200;i++){const v=f(-1+i/100);lo=Math.min(lo,v);hi=Math.max(hi,v)}const pad=(hi-lo)*0.6+0.2;const y0=lo-pad*0.6,y1=hi+pad*0.6;
+ const X=x=>L+(x+1)/2*(W-L-R),Y=y=>top+(y1-y)/(y1-y0)*(H-top-B);ctx.clearRect(0,0,W,H);
+ const cy=78,rr=(W-L-R)/2;ctx.strokeStyle=css('--mut');ctx.lineWidth=1;ctx.beginPath();ctx.ellipse(X(0),cy,rr,62,0,Math.PI,2*Math.PI);ctx.stroke();
+ for(const x of xs){const t=Math.acos(-x);const px=X(0)-rr*Math.cos(t),py=cy-62*Math.sin(t);
+  ctx.setLineDash([3,3]);ctx.strokeStyle=cheb?'#93c5fd':'#d1d5db';ctx.beginPath();ctx.moveTo(px,py);ctx.lineTo(px,cy);ctx.stroke();ctx.setLineDash([]);
+  ctx.fillStyle=cheb?'#2563eb':'#9ca3af';ctx.beginPath();ctx.arc(px,py,3.5,0,7);ctx.fill()}
+ ctx.strokeStyle=css('--grid');ctx.beginPath();ctx.moveTo(L,cy);ctx.lineTo(W-R,cy);ctx.stroke();
+ ctx.save();ctx.beginPath();ctx.rect(L,top,W-L-R,H-top-B);ctx.clip();
+ ctx.strokeStyle=css('--mut');ctx.beginPath();ctx.moveTo(L,Y(0));ctx.lineTo(W-R,Y(0));ctx.stroke();
+ const line=(g,col,w)=>{ctx.strokeStyle=col;ctx.lineWidth=w;ctx.beginPath();for(let i=0;i<=860;i++){const x=-1+i/430,v=Math.max(y0-5,Math.min(y1+5,g(x)));i?ctx.lineTo(X(x),Y(v)):ctx.moveTo(X(x),Y(v))}ctx.stroke()};
+ line(f,css('--fg'),2);line(p,cheb?'#16a34a':'#dc2626',2.6);ctx.restore();
+ for(const x of xs){ctx.fillStyle='#2563eb';ctx.beginPath();ctx.arc(X(x),Y(f(x)),5,0,7);ctx.fill()}
+ ctx.fillStyle=css('--mut');ctx.font='12px sans-serif';ctx.textAlign='center';for(const t of [-1,-.5,0,.5,1])ctx.fillText(t,X(t),H-8);
+ const me=maxerr(f,n,false),mc=maxerr(f,n,true);
+ $('s').innerHTML=`max error — evenly spaced: <span style="color:#dc2626">${me<1e-3?me.toExponential(1):me.toFixed(3)}</span> &nbsp;·&nbsp; Chebyshev: <span style="color:#16a34a">${mc<1e-3?mc.toExponential(1):mc.toFixed(3)}</span>`}
+$('eq').onclick=()=>{cheb=false;$('eq').className='on';$('ch').className='';draw()};$('ch').onclick=()=>{cheb=true;$('ch').className='on';$('eq').className='';draw()};
+$('n').oninput=draw;$('f').onchange=draw;matchMedia('(prefers-color-scheme: dark)').addEventListener('change',draw);draw();
+</script><script>const __post=()=>parent.postMessage({demoHeight:document.body.scrollHeight+8},'*');addEventListener('load',__post);new ResizeObserver(__post).observe(document.body);</script>
+</body></html>

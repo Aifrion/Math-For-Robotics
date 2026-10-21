@@ -1,0 +1,245 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Lecture 4 — Function Approximation | Math for Robotics</title>
+<link rel="stylesheet" href="assets/site.css">
+<link rel="stylesheet" href="vendor/katex/katex.min.css">
+<script defer src="vendor/katex/katex.min.js"></script>
+<script defer src="vendor/katex/auto-render.min.js"></script>
+<script defer src="assets/site.js"></script>
+</head><body>
+<div class="layout">
+<main><div class="content">
+
+<h1>Lecture 4: Function Approximation</h1>
+
+<div class="callout summary"><span class="tag">The one-sentence version:</span>
+Lecture 3 forced the curve <em>through</em> the samples; this lecture asks for the polynomial whose
+<b>worst-case</b> error over the whole interval is smallest — and the answer always looks the same:
+the error <b>equioscillates</b>, and Chebyshev polynomials hand you a nearly-best answer for free.
+<br><span class="small muted">CSE 276C, Lecture 4 · Prof. Henrik Christensen · Numerical Recipes ch. 5.
+All numbers verified in <code>scripts/lec4/verify.py</code>.</span></div>
+
+<div class="toc"><b>Contents</b><ol>
+<li><a href="#why">Why approximate instead of interpolate</a></li>
+<li><a href="#linf">The L<sup>∞</sup> yardstick</a></li>
+<li><a href="#equi">The equioscillation theorem</a></li>
+<li><a href="#line">Worked out fully: the best line for eˣ</a></li>
+<li><a href="#bound">Divided differences &amp; the lower bound</a></li>
+<li><a href="#cheb">Chebyshev polynomials</a></li>
+<li><a href="#chebfit">Chebyshev approximation</a></li>
+<li><a href="#warp">Any interval: domain warping</a></li>
+<li><a href="#trunc">Truncating power series</a></li>
+<li><a href="#summary">Summary</a></li>
+</ol></div>
+
+<h2 id="big">The big picture</h2>
+<p>Interpolation (Lecture 3) answers "what's between my samples?". Approximation answers a different
+question: <b>I can evaluate f anywhere — give me a cheaper stand-in I can trust everywhere.</b>
+You choose where to sample, and it turns out <em>where</em> is most of the game. The lecture's arc:
+define the right error measure (the worst case, not the average) → characterize the optimal
+polynomial (equioscillation) → meet the family that achieves it almost automatically (Chebyshev) →
+use it to shrink lookup tables and truncate series.</p>
+
+<table>
+<tr><th>robotics problem</th><th>what f is</th><th>why approximate</th></tr>
+<tr><td>trig / feedback laws on a microcontroller</td><td>sin, cos, atan2, eˣ</td><td>a 9-term polynomial beats a 30-term series and a huge table (your HW2 cos table is exactly this trade)</td></tr>
+<tr><td>guaranteed tracking error</td><td>reference trajectory</td><td>L<sup>∞</sup> bounds are promises about the <em>worst</em> moment, which is what safety specs ask for</td></tr>
+<tr><td>model simplification</td><td>dynamics / sensor response</td><td>replace an expensive model with a low-degree polynomial plus a certified error band</td></tr>
+<tr><td>arm trajectory sampling</td><td>joint path q(t)</td><td>sampling at Chebyshev points kills the end-of-interval wiggles of Lecture 3</td></tr>
+</table>
+
+<h2 id="why">1 · Why approximate instead of interpolate</h2>
+<p>Interpolation is a hard constraint: hit every sample exactly. But the samples were just the
+points you happened to have — and Lecture 3 showed that forcing a degree-20 polynomial through
+evenly spaced samples makes it <em>worse</em> between them (Runge). Approximation relaxes the
+constraint: never mind hitting samples, minimize the distance to f itself. The surprise of this
+lecture is that the two stories reconnect at the end: the best <em>practical</em> approximation is an
+interpolation — through the right points.</p>
+
+<h2 id="linf">2 · The L<sup>∞</sup> yardstick</h2>
+<p>Distance between f and an approximation p over an interval:</p>
+$$\lVert f - p\rVert_\infty \;=\; \max_{a\le x\le b}\,\lvert f(x)-p(x)\rvert,
+\qquad d(f,\pi_n) \;=\; \min_{p\,\in\,\pi_n}\, \lVert f - p\rVert_\infty$$
+<table>
+<tr><th>symbol</th><th>meaning</th></tr>
+<tr><td>\(\lVert f-p\rVert_\infty\)</td><td>the <b>worst</b> miss anywhere in the interval (not the average miss — that's least squares, Lecture 2)</td></tr>
+<tr><td>\(\pi_n\)</td><td>all polynomials of degree ≤ n</td></tr>
+<tr><td>\(d(f,\pi_n)\)</td><td>how well degree n <em>can possibly</em> do — the minimax distance</td></tr>
+</table>
+<p class="small muted">Weierstrass guarantees \(d(f,\pi_n)\to 0\) for any continuous f: polynomials
+can come arbitrarily close, if you allow the degree to grow. The question is how fast.</p>
+
+<h2 id="equi">3 · The equioscillation theorem</h2>
+<p>How do you recognize the best polynomial when you see it? Chebyshev's characterization:</p>
+$$p^{*} \text{ is the best in } \pi_n \iff
+f - p^{*} \text{ attains } \pm\lVert f-p^{*}\rVert_\infty \text{ at } \ge n+2 \text{ points, alternating in sign}$$
+<p>Intuition: if the error had one lonely worst peak, you could tilt p slightly to shave that peak
+without creating a bigger one elsewhere — so at the optimum the error must be <em>pinned</em> at
+both ends of its range, +max, −max, +max, … so many times that no degree-n adjustment can push all
+the peaks down at once (a degree-n polynomial can't out-wiggle n+2 alternations).</p>
+<div class="callout key"><span class="tag">Key idea:</span> "best worst-case" has a visual
+signature: a <b>ripple of equal height</b>. If your error plot has one big bump, you're not done;
+if it looks like an even wave touching ±ε, you can stop — nobody can do better.</div>
+
+<h2 id="line">4 · Worked out fully: the best line for eˣ</h2>
+<p>The slides' running example: approximate \(f(x)=e^x\) on \([-1,1]\) by a line
+\(p(x)=a+bx\) (n = 1, so the theorem demands <b>3</b> alternating extreme points). The error
+\(e(x)=e^x-a-bx\) is convex, so its extremes are the two endpoints plus one interior minimum —
+exactly three, forced automatically.</p>
+<p><b>Slope.</b> Alternation with equal values at both endpoints means \(e(-1)=e(1)\):</p>
+$$e^{-1}-(a-b) = e^{1}-(a+b)\;\Rightarrow\; b=\frac{e-e^{-1}}{2}=1.1752$$
+<p class="small muted">The minimax slope is the <b>average slope</b> of f across the interval — the
+line "keeps up" with the function overall.</p>
+<p><b>Interior point.</b> The interior extreme is where the error is flat:
+\(e'(x_1) = e^{x_1}-b = 0 \Rightarrow x_1=\ln b = 0.16144\).</p>
+<p><b>Height.</b> Alternation between x = −1 and x₁ means \(e(-1)=-e(x_1)\), which solves to</p>
+$$a=\frac{e - b\,x_1}{2} = 1.2643,
+\qquad \lVert f-p^{*}\rVert_\infty = 0.2788 \;\text{ at } x=-1,\;0.16144,\;+1 \;(+,-,+)$$
+<figure><img src="figures/lec4/01_minimax_line.svg" alt="Three line guesses for e^x and their errors" width="860">
+<figcaption>Fig 1 — three candidate lines (left) and their errors (right). Taylor 1 + x is perfect at 0 and terrible at 1 (error 0.718); the least-squares line averages well but peaks at 0.439; the minimax line ripples evenly: +0.2788, −0.2788, +0.2788.</figcaption></figure>
+<p>Try to beat it yourself — drag a and b and watch the worst error:</p>
+<div class="demo-wrap"><iframe class="demo" src="demos/lec4/minimax_explorer.html" height="480" title="Minimax line explorer"></iframe></div>
+<details><summary>Worked example: every number, verified (click to open)</summary><div class="body">
+<p>\(b = \sinh(1) = (2.71828 - 0.36788)/2 = 1.17520\). \(x_1 = \ln 1.17520 = 0.16144\).
+\(a = (e - b x_1)/2 = (2.71828 - 0.18972)/2 = 1.26428\). Errors:
+\(e(-1) = 0.36788 - (1.26428 - 1.17520) = +0.27880\);
+\(e(x_1) = 1.17520 - (1.26428 + 0.18972) = -0.27880\);
+\(e(1) = 2.71828 - (1.26428 + 1.17520) = +0.27880\). Three touches, alternating — the certificate.
+A Nelder–Mead search over all (a, b) lands on the same line to 5 decimals
+(<code>scripts/lec4/verify.py</code>).</p></div></details>
+
+<h2 id="bound">5 · Divided differences &amp; the lower bound</h2>
+<p>The theorem certifies an answer once you have it. The slides also derive a <b>floor</b> — a
+number no line can beat — using Lecture 3's divided differences:</p>
+$$f[x_0,\dots,x_k] = \frac{f[x_1,\dots,x_k]-f[x_0,\dots,x_{k-1}]}{x_k-x_0},
+\qquad f[x_0,\dots,x_k] = \sum_{i=0}^{k}\frac{f(x_i)}{w'(x_i)},\;\; w=\textstyle\prod(x-x_i)$$
+<p>A degree-1 polynomial has zero second divided difference, so for any line p, on any 3 nodes,
+\(f[x_0,x_1,x_2] = (f-p)[x_0,x_1,x_2]\), and bounding each term gives</p>
+$$d(f,\pi_1)\;\ge\;\frac{\lvert f[x_0,x_1,x_2]\rvert}{\sum_i 1/\lvert w'(x_i)\rvert}
+\;\overset{x=(-1,0,1)}{=}\;\frac{f(-1)-2f(0)+f(1)}{4} = \frac{e - 2 + e^{-1}}{4} = 0.2715$$
+<figure><img src="figures/lec4/02_lower_bound.svg" alt="Lower bound picture" width="560">
+<figcaption>Fig 2 — the geometric version: eˣ at −1, 0, 1 bends away from any chord by gap = e − 2 + 1/e = 0.5431. A line can't bend, so it must miss one of the three points by at least gap/2 = 0.2715.</figcaption></figure>
+<p class="small muted">Sanity check: 0.2715 ≤ 0.2788 ✓ — the floor sits just 2.6% under the true
+optimum. Three strategically chosen points already know almost everything about how hard the
+problem is.</p>
+
+<h2 id="cheb">6 · Chebyshev polynomials</h2>
+<p>The family that makes minimax practical — a cosine wearing a polynomial costume:</p>
+$$T_n(x) = \cos\!\big(n\arccos x\big), \qquad T_{n+1}(x) = 2x\,T_n(x) - T_{n-1}(x),
+\quad T_0 = 1,\; T_1 = x$$
+<table>
+<tr><th>property</th><th>statement</th><th>why it matters</th></tr>
+<tr><td>bounded</td><td>\(\lvert T_n(x)\rvert \le 1\) on [−1,1]</td><td>equal ripple built in — every wiggle has the same height</td></tr>
+<tr><td>zeros</td><td>\(x_k = \cos\frac{\pi(k+\tfrac12)}{N}\), k = 0…N−1</td><td>the <b>Chebyshev points</b> — where you should sample</td></tr>
+<tr><td>extrema</td><td>\(\cos\frac{\pi k}{N}\), values ±1 alternating</td><td>N+1 alternations: exactly the equioscillation pattern</td></tr>
+<tr><td>orthogonal</td><td>\(\int_{-1}^{1}\frac{T_i T_j}{\sqrt{1-x^2}}dx = 0\) (i ≠ j), and discretely over the zeros</td><td>coefficients come from sums, not a linear solve — no Vandermonde, no 10¹⁶ condition number</td></tr>
+<tr><td>extremal</td><td>leading coefficient \(2^{\,n-1}\); among monic degree-n polynomials, \(T_n/2^{n-1}\) has the smallest max on [−1,1]</td><td>this <em>is</em> the minimax property, stated about polynomials themselves</td></tr>
+</table>
+<figure><img src="figures/lec4/03_chebyshev.svg" alt="Chebyshev nodes from the circle and T_n curves" width="900">
+<figcaption>Fig 3 — left: equally spaced angles on a half-circle, dropped straight down, give the Chebyshev points — crowded near ±1. Right: T₀…T₄ all live inside [−1, 1]: same wiggle height everywhere.</figcaption></figure>
+<p>The circle picture is the whole trick: in angle space \(\theta=\arccos x\), T_n is literally
+\(\cos n\theta\) — perfectly even ripples. Projecting the circle onto the line squeezes points
+toward the ends, and that extra end-density is precisely what cancels interpolation's
+end-of-interval blowup.</p>
+
+<h2 id="chebfit">7 · Chebyshev approximation</h2>
+<p>To approximate f, sample it at the N zeros of \(T_N\) and compute coefficients by a plain sum
+(the discrete orthogonality doing the work of a matrix solve):</p>
+$$c_j = \frac{2}{N}\sum_{k=0}^{N-1} f(x_k)\,T_j(x_k),
+\qquad p(x) = \Big[\sum_{k=0}^{m-1} c_k T_k(x)\Big] - \tfrac12 c_0$$
+<table>
+<tr><th>symbol</th><th>meaning</th></tr>
+<tr><td>\(x_k\)</td><td>zeros of \(T_N\): \(\cos\frac{\pi(k+1/2)}{N}\)</td></tr>
+<tr><td>\(c_j\)</td><td>j-th Chebyshev coefficient; for smooth f they decay geometrically</td></tr>
+<tr><td>\(m\le N\)</td><td>how many terms you <b>keep</b> — truncate where the \(c_j\) drop below your error budget</td></tr>
+<tr><td>\(-\tfrac12 c_0\)</td><td>bookkeeping: the j = 0 sum double-counts, so half of \(c_0\) is subtracted</td></tr>
+</table>
+<p>Truncating after m terms leaves an error ≈ the first dropped term, \(c_m T_m(x)\) — and
+\(T_m\) oscillates evenly between ±1, so the error is <b>spread evenly</b>: automatically very
+close to minimax. Not exactly equal to it: for the eˣ line, Chebyshev gives
+\(1.2661 + 1.1303x\) with worst error 0.3219 — 15% above the true minimax 0.2788, at essentially
+zero effort. That trade (give up a few percent, skip the Remez iteration entirely) is why everyone
+uses Chebyshev in practice.</p>
+<figure><img src="figures/lec4/04_nodes.svg" alt="Runge function with equispaced vs Chebyshev nodes" width="860">
+<figcaption>Fig 4 — Lecture 3's Runge function, 11 samples, same degree-10 polynomial. Evenly spaced: max error 1.91. Chebyshev points: 0.11. Nothing changed but <em>where</em> you sampled.</figcaption></figure>
+<p>Play with where the samples go — the half-circle at the top shows the projection trick live:</p>
+<div class="demo-wrap"><iframe class="demo" src="demos/lec4/chebyshev_explorer.html" height="560" title="Chebyshev node explorer"></iframe></div>
+<div class="callout gotcha"><span class="tag">⚠️ Gotcha:</span> Chebyshev fixes <em>where to
+sample a function you can evaluate anywhere</em>. If your data arrives at fixed sensor timestamps,
+you can't choose the nodes — then you're back to Lecture 3 (splines), or least squares. Approximation
+is for when f is yours to query.</div>
+
+<h2 id="warp">8 · Any interval: domain warping</h2>
+<p>Everything above lives on [−1, 1]. For an arbitrary interval [a, b], change variables:</p>
+$$y = \frac{x - \tfrac12(b+a)}{\tfrac12(b-a)} \;\in\;[-1,1]
+\qquad\Longleftrightarrow\qquad x = \tfrac12(b-a)\,y + \tfrac12(b+a)$$
+<p class="small muted">Shift by the midpoint, scale by the half-width. Approximate
+\(g(y)=f(x(y))\) with Chebyshev machinery, then substitute back. Robotics version: your joint
+angle lives in [0, 2π], your cos table in [0, π/2] — warp first, fit second.</p>
+
+<h2 id="trunc">9 · Truncating power series</h2>
+<p>The slides close with the cheapest approximation of all: take a series you already know and
+<b>cut it</b>. For \(f(x) = \frac{1}{2+x}\) on [0, 1]:</p>
+$$\frac{1}{2+x} = \frac12 - \frac{x}{4} + \frac{x^2}{8} - \cdots
+= \sum_{n=0}^{\infty} \frac{(-1)^n x^n}{2^{n+1}}$$
+<p>Each term is only half the previous one, so the cut-off error shrinks by 2 per term: reaching
+\(10^{-9}\) takes about 30 terms (the remainder bound \((1/2)^n\) crosses \(10^{-9}\) at n = 30;
+the measured error, helped by alternating cancellation, crosses at 29). Re-expand the same
+function in Chebyshev polynomials on the warped interval and the coefficients fall ~10× per term
+— the same \(10^{-9}\) now costs <b>9 terms</b>. In your control loop that's a 3× cheaper
+evaluation for the identical guarantee.</p>
+<figure><img src="figures/lec4/05_truncation.svg" alt="Coefficient decay: power series vs Chebyshev" width="760">
+<figcaption>Fig 5 — size of each coefficient (log scale). Power series halves per term; Chebyshev divides by ~10 (= 1/(5+√24), set by how far the pole at x = −2 sits from the interval). Drop everything under the red 10⁻⁹ line: 30 terms vs 9.</figcaption></figure>
+<div class="demo-wrap"><iframe class="demo" src="demos/lec4/truncation_explorer.html" height="480" title="Truncation explorer"></iframe></div>
+<details><summary>Worked example: the slides' 6-step truncation recipe (click to open)</summary><div class="body">
+<ol>
+<li>Warp the interval to [−1, 1]: here x = (y+1)/2, so \(g(y) = \frac{1}{2+(y+1)/2} = \frac{2}{5+y}\).</li>
+<li>Pick N generously (say 60) and compute \(c_j\) at the \(T_N\) zeros by the sum formula.</li>
+<li>Look at the \(\lvert c_j\rvert\): 0.816, 0.083, 0.0083, 0.00084, … — dividing by ~9.9 each step.</li>
+<li>Keep terms until the first dropped one is under budget: \(\lvert c_9\rvert \approx 9\times10^{-10} < 10^{-9}\) → keep m = 9 terms, c₀…c₈.</li>
+<li>Evaluate p by the recurrence (never expand into powers of x — that re-introduces the ill-conditioning).</li>
+<li>Verify: measured max error with 9 terms = 1.0 × 10⁻⁹, with 8 terms = 9.9 × 10⁻⁹ (<code>verify.py</code>). ✓</li>
+</ol></div></details>
+<div class="callout key"><span class="tag">HW2 tie-in:</span> your cos-table problem is this
+lecture in miniature. The interpolation-error bounds h²/8 and h³/(9√3) from HW2 are worst-case
+(L<sup>∞</sup>) statements, the table is the approximation, and the "fewer entries for the same
+guarantee" trade you computed (1572 → 161) is the same economy Chebyshev buys here (30 → 9).</div>
+
+<h2 id="summary">10 · Summary</h2>
+<ul>
+<li>Approximation ≠ interpolation: minimize the worst error over the interval, not the error at fixed samples.</li>
+<li>The optimum has a signature: the error <b>equioscillates</b> — n+2 touches of ±ε with alternating signs. One lonely peak means you can still improve.</li>
+<li>Divided differences give certified <b>lower bounds</b>: for eˣ, no line beats 0.2715; the true best is 0.2788.</li>
+<li>Chebyshev polynomials are cosines in disguise — equal ripple is their native state, and sampling at their zeros makes interpolation nearly minimax (0.3219 vs 0.2788 for the line: 15% worse, zero iteration).</li>
+<li>Chebyshev-truncate your power series: same 10⁻⁹ promise, 9 terms instead of 30.</li>
+</ul>
+<table>
+<tr><th>approach</th><th>minimizes</th><th>cost</th><th>use it when</th></tr>
+<tr><td>Taylor / power series cut</td><td>error <em>at one point</em></td><td>free if you know the series</td><td>only near the expansion point</td></tr>
+<tr><td>least squares (Lec 2)</td><td>average (L²) error</td><td>one linear solve</td><td>noisy data, average-case loss</td></tr>
+<tr><td>true minimax (Remez)</td><td>worst (L<sup>∞</sup>) error, exactly</td><td>iterative exchange algorithm</td><td>you need the last few percent</td></tr>
+<tr><td><b>Chebyshev fit</b></td><td>worst error, nearly</td><td>one sum per coefficient</td><td><b>the default</b> — tables, embedded trig, model stand-ins</td></tr>
+</table>
+
+<details><summary>⚠️ Typos in the slides to watch out for</summary><div class="body"><ul>
+<li>Equioscillation slide: "points at which the error is <b>f(x) = p(x)</b>" → should be <b>f(x) − p(x)</b> (the error attains ±max there, it isn't zero there — the zeros are between the extremes).</li>
+<li>Domain-warping slide: the map is printed as \(y = \frac{x - \frac12(b-a)}{\frac12(b-a)}\) → the numerator should subtract the <b>midpoint</b> \(\frac12(b+a)\), not the half-width. As printed it sends [a,b] to [−0.2, 1.8] for a=2, b=7 instead of [−1, 1] (checked in <code>verify.py</code>).</li>
+<li>The "30 terms vs 9 terms" example is stated for 1/(2+x) on <b>[0, 1]</b> (the warped fit) — on [−1, 1] itself the pole at −2 is closer and Chebyshev needs ~17 terms. The slide doesn't say the interval out loud; the numbers only work on [0, 1].</li>
+<li>"Chebyshev approximation … for periodic functions": T-expansions work for any continuous f on a finite interval — the cosine connection is a change of variables, not a periodicity requirement.</li>
+</ul></div></details>
+
+<details><summary>🧠 Self-check questions</summary><div class="body">
+<details><summary>1 · Your error plot for a degree-3 fit shows peaks +ε, −ε, +ε, −ε, +ε of equal height. Are you done?</summary><div class="body">Yes. n = 3 needs n + 2 = 5 alternating touches — that's exactly what you have, so by the equioscillation theorem no degree-3 polynomial does better. The plot <em>is</em> the optimality certificate.</div></details>
+<details><summary>2 · Why is the minimax slope for eˣ the average slope (e − 1/e)/2 and not f′ somewhere?</summary><div class="body">Equal error at both endpoints forces e(−1) = e(1), i.e. f(1) − f(−1) = p(1) − p(−1) = 2b. The line must gain exactly as much as f does across the interval — its slope is the mean slope. (By the MVT it <em>does</em> equal f′ somewhere: at x₁ = ln b, which is exactly the interior ripple point.)</div></details>
+<details><summary>3 · Where does the ¼ in the lower bound (f(−1) − 2f(0) + f(1))/4 come from?</summary><div class="body">Nodes −1, 0, 1 give |w′| = 2, 1, 2, so Σ1/|w′| = ½ + 1 + ½ = 2; and the second divided difference is (f(−1) − 2f(0) + f(1))/2. Divide the two: the extra factor 2·2 = 4.</div></details>
+<details><summary>4 · Your lookup table is sampled at evenly spaced angles. A teammate says "just use more points". What's the Chebyshev counter-offer?</summary><div class="body">Keep the same number of points but place them at cos(π(k+½)/N) (scaled to your interval): the error stops piling up at the ends and drops to near-minimax. More evenly spaced points on a Runge-like response can make things <em>worse</em>; better-placed points never do.</div></details>
+<details><summary>5 · Chebyshev coefficients of a smooth f drop ~10× per term. Terms cost 1 µs each and you have a 10⁻⁶ error budget. How many terms?</summary><div class="body">You need 10× decay to run ~6 orders from c₀ ≈ O(1): about 6–7 terms, ≈ 7 µs. The decay rate is the design parameter — it's set by how close f's nearest singularity sits to your interval, which is why warping to a smaller interval (pushing the pole relatively farther) made 1/(2+x) so cheap.</div></details>
+<details><summary>6 · Why evaluate the kept terms with the recurrence instead of expanding p(x) into 1, x, x², …?</summary><div class="body">Expanding into monomials reinstates the huge, cancelling coefficients that made Vandermonde ill-conditioned in Lecture 3 (T₁₀'s leading coefficient is 2⁹ = 512). The recurrence T<sub>n+1</sub> = 2xT<sub>n</sub> − T<sub>n−1</sub> works with numbers that all stay in [−1, 1] — stable by construction.</div></details>
+</div></details>
+
+<div class="prevnext"><a href="lec3.html">← Lecture 3: Interpolation</a><a href="lec5.html">Lecture 5: Root Finding →</a></div>
+
+</div></main>
+</div>
+</body></html>
