@@ -1,0 +1,222 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Lecture 2 — Linear Systems | Math for Robotics</title>
+<link rel="stylesheet" href="assets/site.css">
+<link rel="stylesheet" href="vendor/katex/katex.min.css">
+<script defer src="vendor/katex/katex.min.js"></script>
+<script defer src="vendor/katex/auto-render.min.js"></script>
+<script defer src="assets/site.js"></script>
+</head><body>
+<div class="layout">
+<main><div class="content">
+
+<h1>Lecture 2: Linear Systems of Equations</h1>
+
+<div class="callout summary"><span class="tag">The one-sentence version:</span>
+A·x = b is the sentence "mix these known effects (columns) in unknown amounts (x) to meet these
+rules (rows, b)" — and this lecture is how to read it (row view, column view, null space) and how
+to solve it (elimination, LDU, QR, SVD) without the numerics biting you.
+<br><span class="small muted">CSE 276C, Lecture 2 · Prof. Henrik Christensen · Numerical Recipes ch. 2, Math for ML ch. 2.1–2.3.
+All numbers verified in <code>scripts/lec2/verify.py</code>.</span></div>
+
+<div class="toc"><b>Contents</b><ol>
+<li><a href="#why">Where robots meet A·x = b</a></li>
+<li><a href="#anatomy">Anatomy: rows are rules, columns are joints</a></li>
+<li><a href="#rowview">The row view</a></li>
+<li><a href="#colview">The column view &amp; independence</a></li>
+<li><a href="#null">Null space &amp; singularity</a></li>
+<li><a href="#gauss">Solving: Gauss elimination &amp; Gauss–Jordan</a></li>
+<li><a href="#ldu">LDU: factor once, solve many</a></li>
+<li><a href="#eigen">Eigen-decomposition: solving by dividing</a></li>
+<li><a href="#qr">QR, Gram–Schmidt &amp; least squares</a></li>
+<li><a href="#svd">SVD: the universal solvent</a></li>
+<li><a href="#summary">Summary</a></li>
+</ol></div>
+
+<h2 id="big">The big picture</h2>
+<p>Lecture 1 ended with \(v = \Phi\dot q\): hand velocities from joint velocities. This whole
+lecture is about that one equation shape. The running example everywhere below is a 2-link arm
+(links = 1) at shoulder 90°, elbow −90°, whose Jacobian system \(J\dot\theta = v\) is</p>
+$$\begin{pmatrix} -1 & 0 \\ 1 & 1 \end{pmatrix}
+\begin{pmatrix} \dot\theta_1 \\ \dot\theta_2 \end{pmatrix} =
+\begin{pmatrix} 0.5 \\ 0 \end{pmatrix}
+\qquad\text{"slide the hand right at 0.5, keep its height"}$$
+<table>
+<tr><th>robotics problem</th><th>what you have</th><th>what you need</th><th>regime</th></tr>
+<tr><td>velocity IK / resolved-rate control</td><td>desired hand motion v</td><td>joint speeds θ̇</td><td>m = n solve, re-done every tick</td></tr>
+<tr><td>camera calibration (slides)</td><td>many checkerboard constraints</td><td>few camera parameters</td><td>m ≫ n, least squares</td></tr>
+<tr><td>plane estimation from a point cloud (slides)</td><td>thousands of stair points</td><td>4 plane coefficients</td><td>m ≫ n, least squares / SVD</td></tr>
+<tr><td>redundant arm (7 joints, 6 rules)</td><td>a task</td><td>one of many joint motions</td><td>m &lt; n, null space to spend</td></tr>
+</table>
+
+<h2 id="why">1 · Where robots meet A·x = b</h2>
+<p>m equations, n unknowns: \(A \in \mathbb{R}^{m\times n}\) maps \(\mathbb{R}^n \to \mathbb{R}^m\).
+<b>m counts rules, not dimensions of space</b> — a rigid hand can carry up to 6 rules
+(3 position + 3 orientation), and estimation problems routinely carry thousands.</p>
+<figure><img src="figures/lec2/02_m_vs_n.svg" alt="m vs n regimes" width="860">
+<figcaption>Fig 1 — the three regimes. Under-constrained (m &lt; n): solutions to spare. Square: one. Over-constrained (m &gt; n): none exactly, fit instead.</figcaption></figure>
+
+<h2 id="anatomy">2 · Anatomy: rows are rules, columns are joints</h2>
+<p>The single most bug-prone fact in this course:</p>
+<div class="callout gotcha"><span class="tag">⚠️ It's the opposite of what you expect:</span>
+in \(J\dot\theta = v\), each <b>column</b> of A is a <em>joint</em> — the hand velocity that joint
+alone would cause. Each <b>row</b> is a <em>hand direction</em> — one rule about one component of
+the hand's motion. x says <b>how much of each column to mix</b>; b holds <b>only the hand speeds
+you wrote rules for</b>. b = 0 means "every listed speed is zero", not "nothing moves".</div>
+<figure><img src="figures/lec2/01_jacobian_anatomy.svg" alt="Jacobian anatomy" width="860">
+<figcaption>Fig 2 — the running example, fully labeled. Solution x = (−0.5, 0.5), verified.</figcaption></figure>
+
+<h2 id="rowview">3 · The row view: each rule is a line in x-space</h2>
+<p>Draw each row's equation in the space of <em>unknowns</em> (joint speeds). Row i is the set of
+all x that satisfy rule i; the solution is the crossing.</p>
+<p class="try">🕹️ <b>Try it:</b> the row view of the arm system. Slide b₁, b₂ — the lines slide but never turn. A sets directions; b only picks positions.</p>
+<div class="demo-wrap"><iframe class="demo" src="demos/lec2/row_view.html" height="560" title="Row view"></iframe></div>
+<div class="callout insight"><span class="tag">💡 The #1 reading error:</span> these axes are
+x-space (joint speeds), and the crossing point is <b>x, the solution</b> — not b. b never appears
+as a point in this picture; it hides inside each line's position.</div>
+
+<h2 id="colview">4 · The column view: b is a mix of the columns</h2>
+<p>Same equation, transposed intuition: \(A x = x_1\,(\text{col}_1) + x_2\,(\text{col}_2) = b\).
+The columns span a grid of every reachable b (the <b>column space</b>); solving = finding the
+recipe. Independence is visible: columns pointing different ways cover the plane; parallel columns
+collapse the grid onto a line, and most b's become unreachable.</p>
+<p class="try">🕹️ <b>Try it:</b> drag the column tips and b. Tilt column 2 onto column 1 and watch the whole plane of options collapse.</p>
+<div class="demo-wrap"><iframe class="demo" src="demos/lec2/column_independence.html" height="520" title="Column independence"></iframe></div>
+<p class="small muted">Independence test cheat sheet: rows independent ⟺ their lines aren't parallel; columns independent ⟺ their arrows aren't collinear; for square A both happen exactly when det A ≠ 0. And n independent vectors are needed to reach all of n-D — two independent arrows in 3-D span only a plane.</p>
+
+<h2 id="null">5 · Null space: motion the rules can't see</h2>
+$$\text{null}(A) = \{x : Ax = 0\}, \qquad n = \dim(\text{row space}) + \dim(\text{null space})$$
+<p>A null-space vector is a <em>nonzero</em> joint motion producing zero on every listed rule —
+for the arm, joints moving while the hand (or the ruled part of it) holds still. Dependent columns
+create it: if col₂ = 2·col₁, then the mix (2, −1) cancels to zero, and (2, −1) is a null direction —
+one joint doing a job, the other undoing it.</p>
+<p class="try">🕹️ <b>Try it:</b> the joint-speed plane split into row space ⊥ null space, with the arm obeying. Tab 3 is the singular straight arm.</p>
+<div class="demo-wrap"><iframe class="demo" src="demos/lec2/null_space_arm.html" height="560" title="Null space arm"></iframe></div>
+<div class="callout gotcha"><span class="tag">⚠️ The null space belongs to the task <em>and</em> the pose:</span>
+with both rules active, the bent arm has null space {0} — but straighten the arm and a null
+direction appears while a hand direction becomes unreachable. A <b>singularity</b> is exactly that
+silent swap. And remember the rules are bookkeeping, not physics:</div>
+<p class="try">🕹️ <b>Try it:</b> two identical arms, different rule lists. Same physics, different verdicts.</p>
+<div class="demo-wrap"><iframe class="demo" src="demos/lec2/same_physics_two_tasks.html" height="480" title="Same physics two tasks"></iframe></div>
+<p class="small muted">Singular ⟺ (equivalently): det A = 0 · rank &lt; n · dependent rows · dependent columns · nonzero null space · no inverse. Six phrasings, one disease.</p>
+
+<h2 id="gauss">6 · Solving: Gauss elimination &amp; Gauss–Jordan</h2>
+<p>Subtract multiples of rows to zero out everything below the diagonal, then back-substitute.
+The slides' example, verified step by step:</p>
+<details open><summary>Worked example: the slides' 3×3 system (click to close)</summary><div class="body">
+$$\begin{pmatrix} 0&4&-1\\ 1&1&1\\ 2&-2&1 \end{pmatrix} x = \begin{pmatrix}5\\6\\1\end{pmatrix}
+\;\xrightarrow{\text{swap r1,r2 (pivot 0!)}}\;
+\begin{pmatrix} 1&1&1\\ 0&4&-1\\ 2&-2&1 \end{pmatrix}\!\begin{pmatrix}6\\5\\1\end{pmatrix}
+\;\xrightarrow{r_3 -= 2r_1,\; r_3 += r_2}\;
+\begin{pmatrix} 1&1&1\\ 0&4&-1\\ 0&0&-2 \end{pmatrix}\!\begin{pmatrix}6\\5\\-6\end{pmatrix}$$
+<p>Back-substitute: x₃ = 3, then 4x₂ − 3 = 5 → x₂ = 2, then x₁ = 6 − 2 − 3 = <b>1</b>.
+So x = (1, 2, 3) ✓. Gauss–Jordan keeps going (eliminating <em>above</em> the diagonal too) until A
+becomes I and the right side <em>is</em> the answer — prettier, ~50% more work, same result.</p></div></details>
+<div class="callout fix"><span class="tag">✏️ Fine print:</span> that forced row swap is not
+cosmetic — it's <b>pivoting</b>, and with near-zero (not just zero) pivots it's what keeps
+elimination numerically alive. Efficient but "not necessarily stable" (slides) on near-singular
+systems — which is where SVD enters below.</div>
+
+<h2 id="ldu">7 · LDU: factor once, solve many</h2>
+$$PA = LDU \qquad \begin{cases}
+P & \text{permutation: records the row swaps}\\
+L & \text{lower triangular, unit diagonal: records the multipliers}\\
+D & \text{diagonal: the pivots}\\
+U & \text{upper triangular, unit diagonal: pivots divided out}
+\end{cases}$$
+<p>Then \(Ax = b\) becomes three trivial solves: \(Ly = Pb\) (forward), scale by \(D^{-1}\),
+\(Ux\) (backward). <b>Why bother?</b> Factoring costs ~n³/3 — but it's <em>reusable</em>: each new
+b afterwards costs only ~n². A controller solving the same-pose system at 1 kHz factors once and
+streams. (For symmetric positive-definite A, U = Lᵀ — half the work; that's Cholesky's trick.)</p>
+<p class="small muted">LDU is plain Gauss elimination in matrix clothing (below-diagonal only — not Gauss–Jordan). Verified on the slides' A: pivots (2, 4, 1) with the row-swap P.</p>
+
+<h2 id="eigen">8 · Eigen-decomposition: solving by dividing</h2>
+<p>If square A has n independent eigenvectors: \(A = S E S^{-1}\) (S = eigenvectors as columns,
+E = diagonal eigenvalues). In eigen-coordinates A just stretches each axis by its λ — so solving
+is <em>dividing each piece of b by its λ</em>:</p>
+<p class="try">🕹️ <b>Try it:</b> A = [2 1; 1 2], eigenvalues 3 and 1 (checks: trace 2+2 = 3+1, det 3 = 3×1 ✓). Drag b and watch the recipe.</p>
+<div class="demo-wrap"><iframe class="demo" src="demos/lec2/eigen_coordinates.html" height="600" title="Eigen coordinates"></iframe></div>
+<div class="callout insight"><span class="tag">💡 What it's for:</span> <em>not</em> cheap solving —
+LU is cheaper. Its value is insight: λ = 0 ⟺ a null direction; tiny λ ⟺ dividing by almost zero ⟺
+noise amplification. And it needs n independent eigenvectors, which full rank does not guarantee
+(e.g. [1 1; 0 1]). It's the seed of SVD, PCA (Lecture 8), stability analysis, and manipulability ellipses.</div>
+
+<h2 id="qr">9 · QR, Gram–Schmidt &amp; least squares</h2>
+<p>For independent columns, \(A = QR\): Q has A's column space but orthonormal columns
+(\(Q^TQ = I\)), R is upper triangular. Built by <b>Gram–Schmidt</b> — peel off projections:</p>
+$$u_k = v_k - \sum_{j&lt;k} \mathrm{proj}_{u_j}(v_k), \qquad
+\mathrm{proj}_u(v) = \frac{\langle v, u\rangle}{\langle u, u\rangle}\,u$$
+<p>(or via AᵀA's LDU: R = D^{1/2}Lᵀ — the slides' second route). The payoff is over-constrained
+systems: the least-squares solution \(\bar x = (A^TA)^{-1}A^Tb\) becomes</p>
+$$R\bar x = Q^T b \quad\text{(back-substitute)} \qquad\text{— more stable than forming } A^TA$$
+<details><summary>Worked example: best line through (1,1), (2,2), (3,2) (click to open)</summary><div class="body">
+<p>Fit y = c + mx: A has rows (1, xᵢ), b = (1, 2, 2). Both routes give (c, m) = (2/3, 1/2) ✓ —
+but on nearly-dependent columns, squaring A (forming AᵀA) squares the condition number;
+QR avoids ever doing it.</p></div></details>
+
+<h2 id="svd">10 · SVD: the universal solvent</h2>
+$$A = U D V^T, \qquad \sigma_i = \sqrt{\lambda_i(A^TA)}, \quad \sigma_1 \ge \dots \ge \sigma_k > 0,\;\; \text{rank}(A) = k$$
+<p>Any m×n matrix, no exceptions. V's columns (eigenvectors of AᵀA) are input directions, U's
+(eigenvectors of AAᵀ) are output directions, σ's are the gains. Then everything this lecture
+promised falls out of one formula:</p>
+$$x = \sum_i \frac{u_i^T b}{\sigma_i}\, v_i
+\qquad\qquad \bar x = V\,\tfrac{1}{D}\,U^T b \;\;(\text{zeroing } 1/\sigma_i \text{ for } \sigma_i \approx 0)$$
+<table>
+<tr><th>situation</th><th>what \(\bar x = V\frac1D U^Tb\) gives you</th></tr>
+<tr><td>A non-singular</td><td>the unique solution</td></tr>
+<tr><td>A singular, b reachable</td><td>the solution closest to the origin (minimum norm)</td></tr>
+<tr><td>A singular, b unreachable</td><td>the least-squares solution</td></tr>
+</table>
+<details open><summary>Worked example: the slides' near-singular matrix (click to close)</summary><div class="body">
+<p>\(A\) = all-ones with 1.01 on the diagonal. Eigenvalues: <b>3.01, 0.01, 0.01</b> ✓ — "you barely
+have full rank". Condition number K = σ₁/σ₃ = <b>301</b>. Consequence, verified: solving Ax = b
+with b = (3.01, 3.01, 3.01) gives x = (1, 1, 1); perturb b by just 0.27% and x becomes (2, 1, 0) —
+an <b>82%</b> change. Error amplification ≈ the condition number. Gauss elimination happily
+"succeeds" here; only the σ's warn you.</p></div></details>
+<div class="callout insight"><span class="tag">💡 Why robots care:</span> near-singular is the
+<em>normal</em> state near kinematic singularities and in poorly-excited calibration data. The σ's
+are the honest report: tiny σ = a direction your data barely constrains. Zero it out (the slides'
+advice) and you get the best answer the data actually supports. "You can use SVD for all your
+needs" — at ~2–3× LU's cost.</div>
+
+<h2 id="summary">11 · Summary</h2>
+<ul>
+<li>Read A·x = b three ways: rows = rules (lines crossing at x), columns = effects (b as a recipe), map = \(\mathbb{R}^n \to \mathbb{R}^m\).</li>
+<li>Null space = motions the rules can't see; it belongs to the task <em>and</em> the pose; singularity = it appearing unannounced.</li>
+<li>Elimination solves; pivoting keeps it honest; LDU makes it reusable (n³/3 once, n² per b).</li>
+<li>Eigen-decomposition is insight, not speed: solving = dividing by λ; tiny λ = sensitivity.</li>
+<li>QR is the stable path to least squares; SVD is the universal one — rank, null space, condition number, minimum-norm and LSQ solutions, all from the σ's.</li>
+</ul>
+<table>
+<tr><th>tool</th><th>one-line idea</th><th>cost</th><th>use it when</th></tr>
+<tr><td>Gauss / Gauss–Jordan</td><td>eliminate below (/ everywhere), substitute</td><td>n³/3</td><td>one-off square solves</td></tr>
+<tr><td>LDU / LU</td><td>elimination, recorded for reuse</td><td>n³/3 + n² per b</td><td>many b's, control loops</td></tr>
+<tr><td>eigen (SES⁻¹)</td><td>diagonalize; solve by dividing</td><td>&gt; LU</td><td>insight, stability, subspaces</td></tr>
+<tr><td>QR</td><td>orthonormalize the columns</td><td>O(n³)</td><td>least squares, stably</td></tr>
+<tr><td>SVD</td><td>gains σ between input/output directions</td><td>~2–3× LU</td><td>rank, sensitivity, near-singular, m ≠ n</td></tr>
+</table>
+
+<details><summary>⚠️ Typos in the slides to watch out for</summary><div class="body"><ul>
+<li>Slide 7: A's entries repeat "a₀₁ a₀₁" and "a₁₁ a₁₁" — should run a₀₀ a₀₁ a₀₂ … per row.</li>
+<li>Slide 25: "U is m×m w. columns are the eigenvectors of AᵀA" → U's columns are eigenvectors of <b>AAᵀ</b>; V's are AᵀA's (slide 29 has it right).</li>
+<li>Slide 29: "nullspace(A) = <b>first</b> n−k columns of V" → the <b>last</b> n−k columns (those with σ = 0); also "V are the eigenvalue of AᵀA" → eigen<b>vectors</b>.</li>
+<li>Slide 31: "Sensivity" → Sensitivity; the solve formula's "(UDVᵀ)⁻¹<b>v</b>" → b.</li>
+<li>Slide 11: "invertable" → invertible.</li>
+<li>Slide 20: A = SES⁻¹ — here "E is a diagonal matrix … elements are the eigenvalues", S eigenvectors; later slides swap the letters D/E — same object, don't be thrown.</li>
+</ul></div></details>
+
+<details><summary>🧠 Self-check questions</summary><div class="body">
+<details><summary>1 · In the row-view demo, why does changing b never rotate the lines?</summary><div class="body">A row's coefficients set the line's normal direction (its tilt); b only sets which parallel copy of the line you're on. Rotating a line means changing A — physically, changing the arm's pose.</div></details>
+<details><summary>2 · b = 0 with only a height rule. Is the arm frozen?</summary><div class="body">No — b = 0 says every <em>listed</em> speed is zero. The hand can slide sideways freely because no rule mentions hand-x. "Zero right-hand side" constrains only what the rows measure.</div></details>
+<details><summary>3 · Columns (0,2) and (0,1): find a null-space vector and say what the arm is doing.</summary><div class="body">1·(0,2) − 2·(0,1) = 0, so (1, −2) is in the null space: shoulder +1 pushes the hand up 2, elbow −2 pulls it down 2 — one joint undoing the other, hand frozen. Dependent columns ⟺ a cancelling mix ⟺ a null direction.</div></details>
+<details><summary>4 · Why does a 1 kHz controller prefer LDU over just calling solve() each tick?</summary><div class="body">Same A (same pose, approximately) with a new b each tick: factor once at n³/3, then each tick costs n². Also: controllers re-linearize — J is only exact for small steps, so they re-factor as the pose drifts.</div></details>
+<details><summary>5 · A is full rank. Does the eigen-decomposition A = SES⁻¹ necessarily exist?</summary><div class="body">No — full rank guarantees invertibility, not n independent eigenvectors. [1 1; 0 1] has rank 2 but one eigendirection. (Symmetric matrices always decompose; the SVD exists for everything.)</div></details>
+<details><summary>6 · Your calibration solve "works" but K(A) = 10⁵. What does that mean operationally?</summary><div class="body">A 0.001% error in measurements can become a 100% error in parameters (error amplification up to K). Check the σ spectrum, zero the tiny ones (or collect data that excites those directions), and distrust parameters along small-σ directions.</div></details>
+</div></details>
+
+<div class="prevnext"><a href="lec1.html">← Lecture 1: Transformations</a><a href="lec3.html">Lecture 3: Interpolation →</a></div>
+
+</div></main>
+</div>
+</body></html>

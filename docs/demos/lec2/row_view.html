@@ -1,0 +1,74 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Row View of the Arm System</title>
+<style>
+:root{--text-primary:#1f2937;--text-secondary:#4b5563;--text-muted:#9ca3af;--text-success:#15803d;--text-accent:#1d4ed8;--bg-accent:#dbeafe;--border:#e5e7eb;--border-strong:#cbd5e1;--border-accent:#93c5fd;--radius:8px;--bg:#fff;--blue:#378ADD;--pink:#D4537E;--green:#16a34a;--amber:#BA7517}
+@media (prefers-color-scheme:dark){:root{--text-primary:#e5e7eb;--text-secondary:#cbd5e1;--text-muted:#6b7280;--text-success:#4ade80;--text-accent:#93c5fd;--bg-accent:#1e3a8a;--border:#2f2f2f;--border-strong:#4b5563;--border-accent:#3b82f6;--bg:#191919;--blue:#60a5fa;--pink:#f472b6;--green:#4ade80;--amber:#fbbf24}}
+body{margin:0;padding:12px 16px;background:var(--bg);color:var(--text-primary);font:14px/1.5 -apple-system,Segoe UI,Helvetica,Arial,sans-serif;max-width:900px}
+.btns{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:6px}
+.btns button{font:inherit;font-size:13px;padding:4px 10px;border:0.5px solid var(--border-strong);border-radius:var(--radius);background:transparent;color:var(--text-primary);cursor:pointer}
+.btns button.on{background:var(--bg-accent);color:var(--text-accent);border-color:var(--border-accent)}
+.row{display:grid;grid-template-columns:230px 1fr 50px;gap:10px;align-items:center;margin:3px 0;font-size:13px}
+input[type=range]{width:100%}
+#cap{font-size:13px;color:var(--text-secondary);margin-top:4px;line-height:1.55}
+</style></head><body>
+<div class="btns"><button data-p="0" class="on">move right</button><button data-p="1">move up</button><button data-p="2">up-left</button><button data-p="3">stay still</button></div>
+<div class="row"><span>b₁ — hand x speed (rule 1)</span><input type="range" id="b1" min="-1" max="1" step="0.05" value="0.5"><b id="b1v"></b></div>
+<div class="row"><span>b₂ — hand y speed (rule 2)</span><input type="range" id="b2" min="-1" max="1" step="0.05" value="0"><b id="b2v"></b></div>
+<svg id="sv" width="100%" viewBox="0 0 860 400"></svg>
+<div id="cap"></div>
+<script>
+// arm at shoulder 90deg, elbow -90deg: J = [[-1, 0], [1, 1]]
+// row 1: -th1 = b1  (vertical line th1 = -b1)
+// row 2: th1 + th2 = b2 (slanted line)
+let b1=0.5,b2=0;
+const sv=document.getElementById('sv');
+const css=v=>`var(--${v})`;
+const L=30,T=16,S=368,R=1.6;
+const X=v=>L+(v+R)/(2*R)*S,Y=v=>T+(R-v)/(2*R)*S;
+const f=n=>(Math.abs(n)<0.005?0:n).toFixed(2).replace('-','−');
+function draw(){
+ document.getElementById('b1v').textContent=f(b1);
+ document.getElementById('b2v').textContent=f(b2);
+ const x1=-b1, x2=b2-x1; // solution
+ let s=`<defs><clipPath id="cp"><rect x="${L}" y="${T}" width="${S}" height="${S}"/></clipPath></defs>`;
+ for(let v=-1.5;v<=1.5;v+=0.5)s+=`<path d="M${X(v)} ${T}V${T+S}M${L} ${Y(v)}H${L+S}" stroke="var(--border)" stroke-width="0.5"/>`;
+ s+=`<path d="M${X(0)} ${T}V${T+S}M${L} ${Y(0)}H${L+S}" stroke="var(--text-muted)" stroke-width="0.8"/>`;
+ s+=`<rect x="${L}" y="${T}" width="${S}" height="${S}" fill="none" stroke="var(--border-strong)" stroke-width="0.5"/>`;
+ s+=`<g clip-path="url(#cp)">`;
+ // row 1 line: th1 = -b1 (vertical, blue)
+ s+=`<path d="M${X(-b1)} ${T}V${T+S}" stroke="${css('blue')}" stroke-width="3" opacity="0.9"/>`;
+ // row 2 line: th2 = b2 - th1 (slope -1, pink)
+ s+=`<path d="M${X(-R)} ${Y(b2+R)}L${X(R)} ${Y(b2-R)}" stroke="${css('pink')}" stroke-width="3" opacity="0.9"/>`;
+ s+=`</g>`;
+ s+=`<text x="${X(-b1)+6}" y="${T+16}" style="font-size:12px;fill:${css('blue')};font-weight:600">row 1: −θ̇₁ = b₁</text>`;
+ s+=`<text x="${L+6}" y="${Y(b2+R-0.12)+14}" style="font-size:12px;fill:${css('pink')};font-weight:600">row 2: θ̇₁ + θ̇₂ = b₂</text>`;
+ // solution point
+ if(Math.abs(x1)<=R&&Math.abs(x2)<=R){
+  s+=`<circle cx="${X(x1)}" cy="${Y(x2)}" r="8" fill="${css('green')}"/>`;
+  s+=`<text x="${X(x1)+12}" y="${Y(x2)-10}" style="font-size:13px;font-weight:700;fill:${css('green')}">x = (${f(x1)}, ${f(x2)})</text>`}
+ s+=`<text x="${L+S/2}" y="${T+S+14}" text-anchor="middle" style="font-size:11.5px;fill:var(--text-muted)">θ̇₁ shoulder speed →</text>`;
+ s+=`<text x="${L-14}" y="${T+10}" style="font-size:11.5px;fill:var(--text-muted)">θ̇₂</text>`;
+ // check panel
+ const P=480;
+ s+=`<text x="${P}" y="46" style="font-size:13.5px;font-weight:600;fill:var(--text-primary)">the system (bent arm, J·θ̇ = v)</text>`;
+ s+=`<text x="${P}" y="76" style="font-size:14px;fill:${css('blue')}">−1·θ̇₁ + 0·θ̇₂ = ${f(b1)}   (hand x rule)</text>`;
+ s+=`<text x="${P}" y="100" style="font-size:14px;fill:${css('pink')}">  1·θ̇₁ + 1·θ̇₂ = ${f(b2)}   (hand y rule)</text>`;
+ s+=`<text x="${P}" y="140" style="font-size:13.5px;fill:var(--text-primary)">crossing point: θ̇ = (${f(x1)}, ${f(x2)})</text>`;
+ s+=`<text x="${P}" y="164" style="font-size:13.5px;fill:var(--text-success)">check: A·x = (${f(-x1)}, ${f(x1+x2)}) = b ✓</text>`;
+ s+=`<text x="${P}" y="204" style="font-size:12.5px;fill:var(--text-muted)">b only slides the lines along themselves —</text>`;
+ s+=`<text x="${P}" y="222" style="font-size:12.5px;fill:var(--text-muted)">A (the pose) sets their directions.</text>`;
+ s+=`<text x="${P}" y="240" style="font-size:12.5px;fill:var(--text-muted)">The crossing is x, the joint speeds — not b.</text>`;
+ sv.innerHTML=s;
+ document.getElementById('cap').textContent='These axes are joint-speed space (x-space), not hand space. Each row of A is one rule drawn as a line of all joint motions satisfying it; the solution is where the rules agree. Slide b₁, b₂: the lines translate but never rotate — only changing the arm’s pose (the matrix A) could do that.'}
+const PRE=[[0.5,0],[0,0.5],[-0.4,0.4],[0,0]];
+document.querySelectorAll('[data-p]').forEach(bt=>bt.onclick=()=>{
+ document.querySelectorAll('[data-p]').forEach(x=>x.classList.toggle('on',x===bt));
+ [b1,b2]=PRE[+bt.dataset.p];
+ document.getElementById('b1').value=b1;document.getElementById('b2').value=b2;draw()});
+document.getElementById('b1').oninput=e=>{b1=+e.target.value;draw()};
+document.getElementById('b2').oninput=e=>{b2=+e.target.value;draw()};
+draw();
+const post=()=>parent.postMessage({demoHeight:document.body.scrollHeight+8},'*');
+addEventListener('load',post);new ResizeObserver(post).observe(document.body);
+</script></body></html>

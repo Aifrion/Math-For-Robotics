@@ -1,0 +1,72 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Eigen-Coordinates</title>
+<style>
+:root{--text-primary:#1f2937;--text-secondary:#4b5563;--text-muted:#9ca3af;--text-success:#15803d;--text-accent:#1d4ed8;--bg-accent:#dbeafe;--border:#e5e7eb;--border-strong:#cbd5e1;--border-accent:#93c5fd;--radius:8px;--bg:#fff;--blue:#378ADD;--pink:#D4537E;--green:#16a34a;--amber:#BA7517}
+@media (prefers-color-scheme:dark){:root{--text-primary:#e5e7eb;--text-secondary:#cbd5e1;--text-muted:#6b7280;--text-success:#4ade80;--text-accent:#93c5fd;--bg-accent:#1e3a8a;--border:#2f2f2f;--border-strong:#4b5563;--border-accent:#3b82f6;--bg:#191919;--blue:#60a5fa;--pink:#f472b6;--green:#4ade80;--amber:#fbbf24}}
+body{margin:0;padding:12px 16px;background:var(--bg);color:var(--text-primary);font:14px/1.5 -apple-system,Segoe UI,Helvetica,Arial,sans-serif;max-width:900px}
+#out{font-size:13.5px;margin-top:6px;font-variant-numeric:tabular-nums;line-height:1.7}
+#cap{font-size:13px;color:var(--text-secondary);margin-top:4px;line-height:1.55}
+.hint{font-size:12.5px;color:var(--text-muted);margin-bottom:4px}
+</style></head><body>
+<div class="hint">Solve A·x = b for A = [2 1; 1 2] <b>without elimination</b>: drag the amber b. Eigenvectors v₁ = (1,1) (λ = 3, blue) and v₂ = (1,−1) (λ = 1, pink).</div>
+<svg id="sv" width="100%" viewBox="0 0 860 420" style="touch-action:none"></svg>
+<div id="out"></div>
+<div id="cap"></div>
+<script>
+let b=[1.0,0.5],drag=false;
+const sv=document.getElementById('sv');
+const css=v=>`var(--${v})`;
+const S=340,T=36,R=2.2;
+const mk=(L)=>({X:v=>L+(v+R)/(2*R)*S, Y:v=>T+(R-v)/(2*R)*S, L});
+const PA=mk(24),PB=mk(470);
+const IX=p=>(p-24)/S*2*R-R, IY=p=>R-(p-T)/S*2*R;
+const s2=Math.SQRT1_2;
+const f=n=>(Math.abs(n)<0.005?0:n).toFixed(2).replace('-','−');
+function arr(P,p0,p1,col,w,dash){const x1=P.X(p0[0]),y1=P.Y(p0[1]),x2=P.X(p1[0]),y2=P.Y(p1[1]);
+ const d=Math.hypot(x2-x1,y2-y1);if(d<4)return'';
+ const a=(x2-x1)/d,c=(y2-y1)/d,h=9;
+ return `<path d="M${x1} ${y1}L${x2} ${y2}M${x2-h*a+h*0.5*c} ${y2-h*c-h*0.5*a}L${x2} ${y2}L${x2-h*a-h*0.5*c} ${y2-h*c+h*0.5*a}" stroke="${col}" stroke-width="${w}" fill="none" stroke-linecap="round" stroke-linejoin="round"${dash?` stroke-dasharray="${dash}"`:''}/>`}
+function panel(P,title){
+ let s=`<text x="${P.L+S/2}" y="${T-14}" text-anchor="middle" style="font-size:13.5px;font-weight:600;fill:var(--text-primary)">${title}</text>`;
+ s+=`<rect x="${P.L}" y="${T}" width="${S}" height="${S}" fill="none" stroke="var(--border-strong)" stroke-width="0.5"/>`;
+ s+=`<path d="M${P.X(0)} ${T}V${T+S}M${P.L} ${P.Y(0)}H${P.L+S}" stroke="var(--text-muted)" stroke-width="0.7"/>`;
+ // eigen axes
+ s+=`<path d="M${P.X(-2.1)} ${P.Y(-2.1)}L${P.X(2.1)} ${P.Y(2.1)}" stroke="${css('blue')}" stroke-width="1.2" opacity="0.45"/>`;
+ s+=`<path d="M${P.X(-2.1)} ${P.Y(2.1)}L${P.X(2.1)} ${P.Y(-2.1)}" stroke="${css('pink')}" stroke-width="1.2" opacity="0.45"/>`;
+ s+=`<text x="${P.X(1.75)}" y="${P.Y(1.95)}" style="font-size:11.5px;fill:${css('blue')}">v₁ (λ=3)</text>`;
+ s+=`<text x="${P.X(1.45)}" y="${P.Y(-1.8)}" style="font-size:11.5px;fill:${css('pink')}">v₂ (λ=1)</text>`;
+ return s}
+function draw(){
+ // coefficients of b in eigenbasis (unit vectors (1,1)/√2, (1,-1)/√2)
+ const c1=(b[0]+b[1])*s2, c2=(b[0]-b[1])*s2;
+ const x=[(c1/3)*s2+(c2/1)*s2, (c1/3)*s2-(c2/1)*s2];
+ const b1v=[c1*s2,c1*s2], b2v=[c2*s2,-c2*s2];
+ const x1v=[(c1/3)*s2,(c1/3)*s2], x2v=[(c2/1)*s2,-(c2/1)*s2];
+ let s=panel(PA,'b, split along the eigenvectors')+panel(PB,'x = each piece ÷ its λ');
+ // left: b and decomposition
+ s+=arr(PA,[0,0],b1v,css('blue'),2.5)+arr(PA,b1v,b,css('pink'),2.5);
+ s+=arr(PA,[0,0],b,css('amber'),3.5);
+ s+=`<circle cx="${PA.X(b[0])}" cy="${PA.Y(b[1])}" r="9" fill="${css('amber')}" style="cursor:grab"/>`;
+ s+=`<text x="${PA.X(b[0])+12}" y="${PA.Y(b[1])-8}" style="font-size:12.5px;font-weight:700;fill:${css('amber')}">b</text>`;
+ // right: x and its decomposition
+ s+=arr(PB,[0,0],x1v,css('blue'),2.5)+arr(PB,x1v,x,css('pink'),2.5);
+ s+=arr(PB,[0,0],x,css('green'),3.5);
+ s+=`<text x="${PB.X(x[0])+12}" y="${PB.Y(x[1])-8}" style="font-size:12.5px;font-weight:700;fill:${css('green')}">x</text>`;
+ sv.innerHTML=s;
+ const Ax=[2*x[0]+x[1], x[0]+2*x[1]];
+ document.getElementById('out').innerHTML=
+  `b = <b style="color:${css('blue')}">${f(c1)}</b>·v̂₁ + <b style="color:${css('pink')}">${f(c2)}</b>·v̂₂`+
+  ` &nbsp;⟶&nbsp; x = <b style="color:${css('blue')}">${f(c1)}/3</b>·v̂₁ + <b style="color:${css('pink')}">${f(c2)}/1</b>·v̂₂ = (${f(x[0])}, ${f(x[1])})`+
+  `<br>check: A·x = (${f(Ax[0])}, ${f(Ax[1])}) = b <span style="color:var(--text-success)">✓</span> — no elimination, just two divisions`;
+ document.getElementById('cap').textContent='In eigen-coordinates A is just "stretch by 3 along v₁, by 1 along v₂" — so solving means dividing each piece by its λ. Drag b along the pink axis: x equals b (λ = 1, nothing to undo). Drag along the blue axis: x is b shrunk by 3. If a λ were 0, dividing would be impossible — that direction would be a null space; if λ were tiny, x would explode — that’s noise sensitivity and the condition number.'}
+function pt(e){const r=sv.getBoundingClientRect();return[(e.clientX-r.left)*860/r.width,(e.clientY-r.top)*420/r.height]}
+sv.addEventListener('pointerdown',e=>{const[a,b2]=pt(e);
+ if(Math.hypot(PA.X(b[0])-a,PA.Y(b[1])-b2)<30){drag=true;sv.setPointerCapture(e.pointerId)}});
+sv.addEventListener('pointermove',e=>{if(!drag)return;const[a,b2]=pt(e);
+ b=[Math.max(-R,Math.min(R,IX(a))),Math.max(-R,Math.min(R,IY(b2)))];draw()});
+sv.addEventListener('pointerup',()=>drag=false);
+draw();
+const post=()=>parent.postMessage({demoHeight:document.body.scrollHeight+8},'*');
+addEventListener('load',post);new ResizeObserver(post).observe(document.body);
+</script></body></html>
