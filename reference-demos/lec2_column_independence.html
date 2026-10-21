@@ -1,0 +1,60 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Column Independence</title>
+<style>
+:root{--text-primary:#1f2937;--text-secondary:#4b5563;--text-muted:#9ca3af;--text-success:#15803d;--text-danger:#b91c1c;--text-warning:#a16207;--text-accent:#1d4ed8;--bg-accent:#dbeafe;--border:#e5e7eb;--border-strong:#cbd5e1;--border-accent:#93c5fd;--radius:8px;--t:#6b7280;--b:#e5e7eb;--bg:#ffffff}
+@media (prefers-color-scheme:dark){:root{--text-primary:#e5e7eb;--text-secondary:#cbd5e1;--text-muted:#6b7280;--text-success:#4ade80;--text-danger:#f87171;--text-warning:#facc15;--text-accent:#93c5fd;--bg-accent:#1e3a8a;--border:#2f2f2f;--border-strong:#4b5563;--border-accent:#3b82f6;--t:#9ca3af;--b:#333;--bg:#191919}}
+body{margin:0;padding:12px 16px;background:var(--bg);color:var(--text-primary);font:14px/1.5 -apple-system,Segoe UI,Helvetica,Arial,sans-serif;max-width:900px}
+.sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
+</style></head><body>
+<h2 class="sr-only">Column view: two column arrows define a skewed grid; b is reached by mixing the columns. When columns become parallel the grid collapses onto a line and some b's become unreachable.</h2>
+<style>
+.btns{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:6px}
+.btns button{font:inherit;font-size:13px;padding:5px 10px;border:0.5px solid var(--border-strong);border-radius:var(--radius);background:transparent;color:var(--text-primary);cursor:pointer}
+.hint{font-size:12px;color:var(--text-muted);margin-top:4px}
+</style>
+<div class="btns"><button onclick="preset(0)">Bent arm: (−1, 1), (0, 1)</button><button onclick="preset(1)">Straight arm: (0, 2), (0, 1)</button><button onclick="preset(2)">Parallel: (0.5, 1), (1, 2)</button></div>
+<svg id="sv" width="100%" viewBox="0 0 680 360" style="display:block;touch-action:none"></svg>
+<div class="hint">Drag the blue tip (column 1), the pink tip (column 2), or the amber dot (b). Tilt column 2 onto column 1's line and it snaps parallel.</div>
+<script>
+const BL='#378ADD',PK='#D4537E',AM='#BA7517',L=20,T=20,S=320,R=2.6;
+const X=v=>L+(v+R)/(2*R)*S,Y=v=>T+(R-v)/(2*R)*S,IX=p=>(p-L)/S*2*R-R,IY=p=>R-(p-T)/S*2*R;
+let c1=[-1,1],c2=[0,1],b=[0.5,0],drag=null;
+const f=n=>(Math.abs(n)<0.005?0:n).toFixed(2).replace('-','−');
+function t(x,y,s,o={}){return `<text x="${x}" y="${y}" style="font-size:${o.sz||13}px;fill:${o.c||'var(--text-primary)'};font-weight:${o.w||400}" text-anchor="${o.a||'start'}">${s}</text>`}
+function arr(p0,p1,col,w,dash){const x1=X(p0[0]),y1=Y(p0[1]),x2=X(p1[0]),y2=Y(p1[1]),d=Math.hypot(x2-x1,y2-y1);if(d<4)return'';const a=(x2-x1)/d,c=(y2-y1)/d,h=9;
+ return `<path d="M${x1} ${y1}L${x2} ${y2}M${x2-h*a+h*0.5*c} ${y2-h*c-h*0.5*a}L${x2} ${y2}L${x2-h*a-h*0.5*c} ${y2-h*c+h*0.5*a}" stroke="${col}" stroke-width="${w}" fill="none" stroke-linecap="round" stroke-linejoin="round"${dash?` stroke-dasharray="${dash}"`:''}/>`}
+function draw(){
+ const det=c1[0]*c2[1]-c1[1]*c2[0],ind=Math.abs(det)>1e-6;
+ let s=`<defs><clipPath id="cp"><rect x="${L}" y="${T}" width="${S}" height="${S}"/></clipPath></defs><g clip-path="url(#cp)">`;
+ if(ind){for(let k=-8;k<=8;k++){s+=`<path d="M${X(k*c1[0]-12*c2[0])} ${Y(k*c1[1]-12*c2[1])}L${X(k*c1[0]+12*c2[0])} ${Y(k*c1[1]+12*c2[1])}" stroke="${PK}" stroke-width="0.6" opacity="0.35"/>`;
+  s+=`<path d="M${X(k*c2[0]-12*c1[0])} ${Y(k*c2[1]-12*c1[1])}L${X(k*c2[0]+12*c1[0])} ${Y(k*c2[1]+12*c1[1])}" stroke="${BL}" stroke-width="0.6" opacity="0.35"/>`}}
+ else{const u=Math.hypot(c1[0],c1[1])>1e-6?c1:c2,n=Math.hypot(u[0],u[1]);if(n>1e-6)s+=`<path d="M${X(-9*u[0]/n)} ${Y(-9*u[1]/n)}L${X(9*u[0]/n)} ${Y(9*u[1]/n)}" stroke="var(--text-primary)" stroke-width="7" opacity="0.12" stroke-linecap="round"/>`}
+ s+=`<path d="M${X(0)} ${T}V${T+S}M${L} ${Y(0)}H${L+S}" stroke="var(--text-muted)" stroke-width="0.8"/>`;
+ let info=[];
+ if(ind){const x1=(b[0]*c2[1]-b[1]*c2[0])/det,x2=(c1[0]*b[1]-c1[1]*b[0])/det,mid=[x1*c1[0],x1*c1[1]];
+  s+=arr([0,0],mid,BL,2.5,'6 4')+arr(mid,b,PK,2.5,'6 4');
+  info=[['Independent columns','var(--text-success)'],['They point different ways, so the',null],['grid covers the whole plane.',null],['Every b has exactly one recipe:',null],[`b = ${f(x1)}·col 1 + ${f(x2)}·col 2`,'var(--text-primary)']];
+ } else {const u=Math.hypot(c1[0],c1[1])>1e-6?c1:c2,nn=u[0]*u[0]+u[1]*u[1],pr=(b[0]*u[0]+b[1]*u[1])/nn,p=[pr*u[0],pr*u[1]],off=Math.hypot(b[0]-p[0],b[1]-p[1]);
+  if(off>0.03)s+=`<path d="M${X(b[0])} ${Y(b[1])}L${X(p[0])} ${Y(p[1])}" stroke="var(--text-danger)" stroke-width="1.5" stroke-dasharray="4 3"/><circle cx="${X(p[0])}" cy="${Y(p[1])}" r="5" fill="none" stroke="var(--text-danger)" stroke-width="1.5"/>`;
+  let nv='';const n2=c2[0]*c2[0]+c2[1]*c2[1];if(n2>1e-6){const k=(c1[0]*c2[0]+c1[1]*c2[1])/n2;nv=`1·col 1 − ${f(k)}·col 2 = 0`}else nv='col 2 is zero';
+  info=[['Dependent columns','var(--text-danger)'],['Both on one line: the grid',null],['squashes onto the gray line.',null],[off>0.03?'b is off the line: unreachable.':'b is on the line: many recipes.',off>0.03?'var(--text-danger)':'var(--text-warning)'],[`Cancelling mix: ${nv}`,'var(--text-primary)']];
+  if(off>0.03)info.push(['Red circle = closest reachable','var(--text-secondary)'],['(the least-squares answer).','var(--text-secondary)']);}
+ s+=`</g>`+arr([0,0],c1,BL,3)+arr([0,0],c2,PK,3);
+ s+=`<circle cx="${X(c1[0])}" cy="${Y(c1[1])}" r="7" fill="${BL}" opacity="0.25"/><circle cx="${X(c2[0])}" cy="${Y(c2[1])}" r="7" fill="${PK}" opacity="0.25"/><circle cx="${X(b[0])}" cy="${Y(b[1])}" r="7" fill="${AM}"/>`;
+ s+=`<rect x="${L}" y="${T}" width="${S}" height="${S}" fill="none" stroke="var(--border-strong)" stroke-width="0.5"/>`;
+ const P=370;s+=t(P,40,`col 1 = (${f(c1[0])}, ${f(c1[1])})`,{c:BL,w:500})+t(P,62,`col 2 = (${f(c2[0])}, ${f(c2[1])})`,{c:PK,w:500})+t(P,84,`b = (${f(b[0])}, ${f(b[1])})`,{c:AM,w:500})+t(P,110,`det = ${f(det)}`,{c:'var(--text-secondary)'});
+ info.forEach((r,i)=>{s+=t(P,148+i*21,r[0],{c:r[1]||'var(--text-secondary)',w:i===0?500:400,sz:i===0?15:13})});
+ document.getElementById('sv').innerHTML=s}
+function preset(k){if(k===0){c1=[-1,1];c2=[0,1];b=[0.5,0]}if(k===1){c1=[0,2];c2=[0,1];b=[0.5,0]}if(k===2){c1=[0.5,1];c2=[1,2];b=[0.75,1.5]}draw()}
+const sv=document.getElementById('sv');
+function pt(e){const r=sv.getBoundingClientRect();return[(e.clientX-r.left)*680/r.width,(e.clientY-r.top)*360/r.height]}
+sv.addEventListener('pointerdown',e=>{const[px,py]=pt(e);const h=[['b',b],['c2',c2],['c1',c1]];for(const[k,v]of h){if(Math.hypot(X(v[0])-px,Y(v[1])-py)<16){drag=k;sv.setPointerCapture(e.pointerId);return}}});
+sv.addEventListener('pointermove',e=>{if(!drag)return;const[px,py]=pt(e);let v=[Math.max(-R,Math.min(R,IX(px))),Math.max(-R,Math.min(R,IY(py)))];
+ if(drag!=='b'){const o=drag==='c1'?c2:c1,no=Math.hypot(o[0],o[1]),nv=Math.hypot(v[0],v[1]);if(no>1e-6&&nv>1e-6){const cr=(o[0]*v[1]-o[1]*v[0])/(no*nv);if(Math.abs(cr)<0.05){const d=(o[0]*v[0]+o[1]*v[1])/(no*no);v=[d*o[0],d*o[1]]}}}
+ if(drag==='b')b=v;else if(drag==='c1')c1=v;else c2=v;draw()});
+sv.addEventListener('pointerup',()=>drag=null);
+preset(0);
+</script>
+
+</body></html>

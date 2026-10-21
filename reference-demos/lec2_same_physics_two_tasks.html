@@ -1,0 +1,59 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Same Physics, Two Tasks</title>
+<style>
+:root{--text-primary:#1f2937;--text-secondary:#4b5563;--text-muted:#9ca3af;--text-success:#15803d;--text-danger:#b91c1c;--text-warning:#a16207;--text-accent:#1d4ed8;--bg-accent:#dbeafe;--border:#e5e7eb;--border-strong:#cbd5e1;--border-accent:#93c5fd;--radius:8px;--t:#6b7280;--b:#e5e7eb;--bg:#ffffff}
+@media (prefers-color-scheme:dark){:root{--text-primary:#e5e7eb;--text-secondary:#cbd5e1;--text-muted:#6b7280;--text-success:#4ade80;--text-danger:#f87171;--text-warning:#facc15;--text-accent:#93c5fd;--bg-accent:#1e3a8a;--border:#2f2f2f;--border-strong:#4b5563;--border-accent:#3b82f6;--t:#9ca3af;--b:#333;--bg:#191919}}
+body{margin:0;padding:12px 16px;background:var(--bg);color:var(--text-primary);font:14px/1.5 -apple-system,Segoe UI,Helvetica,Arial,sans-serif;max-width:900px}
+.sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
+</style></head><body>
+<h2 class="sr-only">Two identical 2-link arms. Left task requires hand x and hand y speed to be zero; right task requires only hand y speed to be zero. The right arm can slide its hand sideways at constant height, the left cannot.</h2>
+<style>
+.bar{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:6px}
+.bar button{font:inherit;font-size:13px;padding:5px 10px;border:0.5px solid var(--border-strong);border-radius:var(--radius);background:transparent;color:var(--text-primary);cursor:pointer}
+.bar button.on{background:var(--bg-accent);color:var(--text-accent);border-color:var(--border-accent)}
+#cap{font-size:13px;color:var(--text-secondary);margin-top:6px;line-height:1.6}
+</style>
+<div class="bar"><button id="m1" onclick="setMode(1)">What each task allows</button><button id="m2" onclick="setMode(2)">Same joint motion on both</button><button id="pp" onclick="toggle()">Pause</button></div>
+<svg id="sv" width="100%" viewBox="0 0 680 300" style="display:block"></svg>
+<div id="cap"></div>
+<script>
+let mode=1,run=true,t0=performance.now(),tp=0;
+const S=95,BASES=[[100,225],[440,225]],Y0=1;
+function ik(h){const d2=h*h+Y0*Y0;const c2=Math.max(-1,Math.min(1,(d2-2)/2));const q2=-Math.acos(c2);const q1=Math.atan2(Y0,h)-Math.atan2(Math.sin(q2),1+Math.cos(q2));return[q1,q2]}
+function fk(q){const e=[Math.cos(q[0]),Math.sin(q[0])];return[e,[e[0]+Math.cos(q[0]+q[1]),e[1]+Math.sin(q[0]+q[1])]]}
+function jac(q){const s1=Math.sin(q[0]),s12=Math.sin(q[0]+q[1]),c1=Math.cos(q[0]),c12=Math.cos(q[0]+q[1]);return[[-s1-s12,-s12],[c1+c12,c12]]}
+function t(x,y,s,o={}){return `<text x="${x}" y="${y}" style="font-size:${o.sz||12}px;fill:${o.c||'var(--text-secondary)'};font-weight:${o.w||400}" text-anchor="${o.a||'start'}">${s}</text>`}
+const f=n=>(Math.abs(n)<0.005?0:n).toFixed(2).replace('-','−');
+const OK='var(--text-success)',NO='var(--text-danger)';
+function arm(B,q){const[e,h]=fk(q);const W=p=>[B[0]+p[0]*S,B[1]-p[1]*S];const E=W(e),H=W(h);
+ let s=`<rect x="${B[0]-14}" y="${B[1]}" width="28" height="7" rx="2" fill="none" stroke="#888780"/>`;
+ s+=`<path d="M${B[0]-20} ${B[1]-Y0*S}H${B[0]+175}" stroke="#BA7517" stroke-width="1" stroke-dasharray="2 4"/>`;
+ s+=`<path d="M${B[0]} ${B[1]}L${E[0]} ${E[1]}L${H[0]} ${H[1]}" stroke="var(--text-primary)" stroke-width="4.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/>`;
+ s+=`<circle cx="${E[0]}" cy="${E[1]}" r="4" fill="none" stroke="var(--text-primary)" stroke-width="1.5"/><circle cx="${H[0]}" cy="${H[1]}" r="6" fill="#BA7517"/>`;
+ return s}
+function frame(now){
+ const tt=run?(now-t0)/1000:tp;if(run)tp=tt;
+ const h=1+0.55*Math.sin(tt*1.4),hd=0.55*1.4*Math.cos(tt*1.4);
+ const qR=ik(h),eps=1e-4,qR2=ik(h+eps*hd);const qd=[(qR2[0]-qR[0])/eps,(qR2[1]-qR[1])/eps];
+ const qL=mode===1?ik(1):qR,qdL=mode===1?[0,0]:qd;
+ const vL=[0,1].map(i=>jac(qL)[i][0]*qdL[0]+jac(qL)[i][1]*qdL[1]),vR=[0,1].map(i=>jac(qR)[i][0]*qd[0]+jac(qR)[i][1]*qd[1]);
+ let s='';
+ s+=t(170,22,'Task A: hand x = 0 AND hand y = 0',{c:'var(--text-primary)',w:500,a:'middle',sz:13});
+ s+=t(510,22,'Task B: hand y = 0 only',{c:'var(--text-primary)',w:500,a:'middle',sz:13});
+ s+=`<path d="M340 34V290" stroke="var(--border)" stroke-width="0.5"/>`;
+ s+=arm(BASES[0],qL)+arm(BASES[1],qR);
+ const pxL=Math.abs(vL[0])<0.005,pyL=Math.abs(vL[1])<0.005,pyR=Math.abs(vR[1])<0.005;
+ s+=t(40,258,`hand x speed: ${f(vL[0])}`,{c:'var(--text-primary)'})+t(200,258,pxL?'✓ rule met':'✗ breaks rule',{c:pxL?OK:NO,w:500});
+ s+=t(40,280,`hand y speed: ${f(vL[1])}`,{c:'var(--text-primary)'})+t(200,280,pyL?'✓ rule met':'✗ breaks rule',{c:pyL?OK:NO,w:500});
+ s+=t(380,258,`hand x speed: ${f(vR[0])}`,{c:'var(--text-primary)'})+t(540,258,'no rule — anything OK',{c:'var(--text-muted)'});
+ s+=t(380,280,`hand y speed: ${f(vR[1])}`,{c:'var(--text-primary)'})+t(540,280,pyR?'✓ rule met':'✗ breaks rule',{c:pyR?OK:NO,w:500});
+ document.getElementById('sv').innerHTML=s;
+ requestAnimationFrame(frame)}
+function setMode(m){mode=m;[1,2].forEach(i=>document.getElementById('m'+i).classList.toggle('on',i===m));
+ document.getElementById('cap').innerHTML=m===1?'Each arm does the only kind of motion its task allows. Task A has no null space, so the only joint motion that passes is (0, 0): it can’t move. Task B has a null space, so it can slide its hand sideways forever while the height never changes.':'Now both arms get the exact same joint motion. The physics is identical, so the arms look identical. Only the verdict differs: the same motion fails Task A (hand x isn’t 0) and passes Task B (no rule on hand x).'}
+function toggle(){run=!run;document.getElementById('pp').textContent=run?'Pause':'Play';if(run)t0=performance.now()-tp*1000}
+setMode(1);requestAnimationFrame(frame);
+</script>
+
+</body></html>

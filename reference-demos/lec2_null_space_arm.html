@@ -1,0 +1,86 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Null Space Arm</title>
+<style>
+:root{--text-primary:#1f2937;--text-secondary:#4b5563;--text-muted:#9ca3af;--text-success:#15803d;--text-danger:#b91c1c;--text-warning:#a16207;--text-accent:#1d4ed8;--bg-accent:#dbeafe;--border:#e5e7eb;--border-strong:#cbd5e1;--border-accent:#93c5fd;--radius:8px;--t:#6b7280;--b:#e5e7eb;--bg:#ffffff}
+@media (prefers-color-scheme:dark){:root{--text-primary:#e5e7eb;--text-secondary:#cbd5e1;--text-muted:#6b7280;--text-success:#4ade80;--text-danger:#f87171;--text-warning:#facc15;--text-accent:#93c5fd;--bg-accent:#1e3a8a;--border:#2f2f2f;--border-strong:#4b5563;--border-accent:#3b82f6;--t:#9ca3af;--b:#333;--bg:#191919}}
+body{margin:0;padding:12px 16px;background:var(--bg);color:var(--text-primary);font:14px/1.5 -apple-system,Segoe UI,Helvetica,Arial,sans-serif;max-width:900px}
+.sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
+</style></head><body>
+<h2 class="sr-only">Joint-speed plane showing row space and null space for a 2-joint arm, with a draggable joint-speed point split into row and null parts, and the arm's resulting hand motion.</h2>
+<style>
+.tabs{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:6px}
+.tabs button,.acts button{font:inherit;font-size:13px;padding:5px 10px;border:0.5px solid var(--border-strong);border-radius:var(--radius);background:transparent;color:var(--text-primary);cursor:pointer}
+.tabs button.on{background:var(--bg-accent);color:var(--text-accent);border-color:var(--border-accent)}
+.acts{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px}
+#info{font-size:13px;color:var(--text-secondary);margin-top:6px;line-height:1.6}
+</style>
+<div class="tabs"><button id="t1" onclick="setCase(1)">Bent arm, control x and y</button><button id="t2" onclick="setCase(2)">Bent arm, control height only</button><button id="t3" onclick="setCase(3)">Straight arm (singular)</button></div>
+<svg id="sv" width="100%" viewBox="0 0 680 330" style="display:block;touch-action:none"></svg>
+<div class="acts"><button onclick="slide()">Slide along null space</button><button onclick="drop()">Drop to row space (shortest x)</button><button onclick="setX(0,0)">Reset to (0, 0)</button></div>
+<div id="info"></div>
+<script>
+const BL='#378ADD',RD='#E24B4A',GR='#888780',AM='#BA7517';
+let cs=2,x=[-0.6,0.9],anim=null;
+const P0=20,PS=290,R=1.5;
+const PX=v=>P0+(v+R)/(2*R)*PS,PY=v=>P0+(R-v)/(2*R)*PS,IX=p=>(p-P0)/PS*2*R-R,IY=p=>R-(p-P0)/PS*2*R;
+const f=n=>(Math.abs(n)<5e-3?0:n).toFixed(2).replace('-','−');
+const C={1:{q:[Math.PI/2,-Math.PI/2],rows:[[-1,0],[1,1]],rl:['hand x','hand y'],u:null,base:[440,265],sc:110},
+2:{q:[Math.PI/2,-Math.PI/2],rows:[[1,1]],rl:['hand y'],u:[1/Math.SQRT2,1/Math.SQRT2],base:[440,265],sc:110},
+3:{q:[0,0],rows:[[0,0],[2,1]],rl:['hand x','hand y'],u:[2/Math.sqrt(5),1/Math.sqrt(5)],base:[395,190],sc:115}};
+function fk(q){const e=[Math.cos(q[0]),Math.sin(q[0])];return[e,[e[0]+Math.cos(q[0]+q[1]),e[1]+Math.sin(q[0]+q[1])]]}
+function jac(q){const s1=Math.sin(q[0]),s12=Math.sin(q[0]+q[1]),c1=Math.cos(q[0]),c12=Math.cos(q[0]+q[1]);return[[-s1-s12,-s12],[c1+c12,c12]]}
+function mv(M,v){return M.map(r=>r[0]*v[0]+r[1]*v[1])}
+function t(x0,y0,s,o={}){return `<text x="${x0}" y="${y0}" style="font-size:${o.sz||12}px;fill:${o.c||'var(--text-secondary)'};font-weight:${o.w||400}" text-anchor="${o.a||'start'}">${s}</text>`}
+function arrow(x1,y1,x2,y2,c,w){const d=Math.hypot(x2-x1,y2-y1);if(d<3)return'';const ux=(x2-x1)/d,uy=(y2-y1)/d,h=8;return `<path d="M${x1} ${y1}L${x2} ${y2}M${x2-h*ux+h*0.5*uy} ${y2-h*uy-h*0.5*ux}L${x2} ${y2}L${x2-h*ux-h*0.5*uy} ${y2-h*uy+h*0.5*ux}" stroke="${c}" stroke-width="${w}" fill="none" stroke-linecap="round" stroke-linejoin="round"/>`}
+function split(){const u=C[cs].u;if(!u)return[[...x],[0,0]];const d=x[0]*u[0]+x[1]*u[1];const r=[d*u[0],d*u[1]];return[r,[x[0]-r[0],x[1]-r[1]]]}
+function draw(){
+ const c=C[cs];let s=`<defs><clipPath id="cp"><rect x="${P0}" y="${P0}" width="${PS}" height="${PS}"/></clipPath></defs>`;
+ for(let v=-1;v<=1;v+=0.5)s+=`<path d="M${PX(v)} ${P0}V${P0+PS}M${P0} ${PY(v)}H${P0+PS}" stroke="var(--border)" stroke-width="0.5"/>`;
+ s+=`<rect x="${P0}" y="${P0}" width="${PS}" height="${PS}" fill="none" stroke="var(--border-strong)" stroke-width="0.5"/>`;
+ s+=`<path d="M${PX(0)} ${P0}V${P0+PS}M${P0} ${PY(0)}H${P0+PS}" stroke="var(--text-muted)" stroke-width="0.8"/>`;
+ s+=t(P0+PS/2,P0+PS+16,'θ̇₁ shoulder',{a:'middle',sz:11})+t(P0+4,P0+12,'θ̇₂ elbow',{sz:11});
+ s+=`<g clip-path="url(#cp)">`;
+ if(c.u){const u=c.u,n=[-u[1],u[0]];
+  s+=`<path d="M${PX(-3*u[0])} ${PY(-3*u[1])}L${PX(3*u[0])} ${PY(3*u[1])}" stroke="${BL}" stroke-width="3" opacity="0.85"/>`;
+  s+=`<path d="M${PX(-3*n[0])} ${PY(-3*n[1])}L${PX(3*n[0])} ${PY(3*n[1])}" stroke="${RD}" stroke-width="3" opacity="0.85"/>`;
+  const k=0.13;s+=`<path d="M${PX(k*u[0])} ${PY(k*u[1])}L${PX(k*u[0]+k*n[0])} ${PY(k*u[1]+k*n[1])}L${PX(k*n[0])} ${PY(k*n[1])}" stroke="var(--text-primary)" stroke-width="1" fill="none"/>`;
+ } else {s+=`<rect x="${P0}" y="${P0}" width="${PS}" height="${PS}" fill="${BL}" opacity="0.08"/>`;s+=`<circle cx="${PX(0)}" cy="${PY(0)}" r="5" fill="${RD}"/>`}
+ c.rows.forEach(r=>{if(Math.hypot(r[0],r[1])>0)s+=arrow(PX(0),PY(0),PX(r[0]*0.55),PY(r[1]*0.55),BL,2)});
+ const [xr,xn]=split();
+ if(c.u){s+=`<path d="M${PX(x[0])} ${PY(x[1])}L${PX(xr[0])} ${PY(xr[1])}" stroke="${RD}" stroke-width="1.2" stroke-dasharray="4 3"/>`;
+  s+=`<circle cx="${PX(xr[0])}" cy="${PY(xr[1])}" r="5" fill="${BL}"/>`}
+ s+=`</g><circle cx="${PX(x[0])}" cy="${PY(x[1])}" r="9" fill="var(--text-primary)" style="cursor:grab"/>`;
+ s+=t(Math.min(PX(x[0])+12,P0+PS-14),Math.max(PY(x[1])-10,P0+14),'x',{c:'var(--text-primary)',w:500,sz:13});
+ const q=c.q,J=jac(q),v=mv(J,x),[e,h]=fk(q),B=c.base,S=c.sc,W=p=>[B[0]+p[0]*S,B[1]-p[1]*S];
+ const st=0.35,q2=[q[0]+st*x[0],q[1]+st*x[1]],[e2,h2]=fk(q2);
+ const E=W(e),H=W(h),E2=W(e2),H2=W(h2);
+ if(cs===2)s+=`<path d="M360 ${H[1]}H670" stroke="${AM}" stroke-width="1" stroke-dasharray="2 4"/>`+t(668,H[1]-6,'height to hold',{a:'end',sz:11,c:AM});
+ s+=`<rect x="${B[0]-14}" y="${B[1]}" width="28" height="7" rx="2" fill="none" stroke="${GR}"/>`;
+ s+=`<path d="M${B[0]} ${B[1]}L${E2[0]} ${E2[1]}L${H2[0]} ${H2[1]}" stroke="${GR}" stroke-width="3" fill="none" stroke-dasharray="5 4" opacity="0.7" stroke-linecap="round"/>`;
+ s+=`<path d="M${B[0]} ${B[1]}L${E[0]} ${E[1]}L${H[0]} ${H[1]}" stroke="var(--text-primary)" stroke-width="4" fill="none" stroke-linecap="round" stroke-linejoin="round"/>`;
+ s+=`<circle cx="${E[0]}" cy="${E[1]}" r="4" fill="none" stroke="var(--text-primary)" stroke-width="1.5"/>`;
+ s+=arrow(H[0],H[1],H[0]+v[0]*70,H[1]-v[1]*70,AM,2.5);
+ s+=t(520,322,'solid = now · dashed = after a small step',{a:'middle',sz:11});
+ document.getElementById('sv').innerHTML=s;
+ const out=mv(c.rows,x);
+ let msg=`Ax = (${out.map(f).join(', ')})  →  ${c.rl.map((l,i)=>l+' '+f(out[i])).join(', ')}.`;
+ if(cs===1)msg+=` Row space = the whole plane (shaded), so the null space is only the red dot at (0, 0). Any x other than 0 moves the hand.`;
+ if(cs===2)msg+=` Blue line = row space (along the row (1, 1)). Red line = null space (along (1, −1)): shoulder one way, elbow the other, and the hand keeps its height. x = <span style="color:${BL}">x_row (${xr.map(f).join(', ')})</span> + <span style="color:${RD}">x_null (${xn.map(f).join(', ')})</span>.`;
+ if(cs===3)msg+=` The first row is all zeros, so no joint speed can move the hand sideways. Red line = null space (along (1, −2)): the joints move, the hand doesn't. x = <span style="color:${BL}">x_row (${xr.map(f).join(', ')})</span> + <span style="color:${RD}">x_null (${xn.map(f).join(', ')})</span>.`;
+ document.getElementById('info').innerHTML=msg;
+}
+function setCase(k){cs=k;if(anim){cancelAnimationFrame(anim);anim=null}[1,2,3].forEach(i=>document.getElementById('t'+i).classList.toggle('on',i===k));x=k===3?[0.3,0.6]:k===2?[-0.6,0.9]:[-0.5,0.5];draw()}
+function setX(a,b){if(anim){cancelAnimationFrame(anim);anim=null}x=[a,b];draw()}
+function drop(){if(anim){cancelAnimationFrame(anim);anim=null}const[r]=split();x=r;draw()}
+function slide(){if(anim)cancelAnimationFrame(anim);const u=C[cs].u;if(!u){draw();return}const n=[-u[1],u[0]],[r]=split(),t0=performance.now();
+ const go=now=>{const k=Math.sin((now-t0)/700)*0.9;x=[r[0]+k*n[0],r[1]+k*n[1]];draw();if(now-t0<4400)anim=requestAnimationFrame(go);else anim=null};anim=requestAnimationFrame(go)}
+const sv=document.getElementById('sv');let drag=false;
+function pt(e){const b=sv.getBoundingClientRect();return[(e.clientX-b.left)*680/b.width,(e.clientY-b.top)*330/b.height]}
+sv.addEventListener('pointerdown',e=>{const[a,b]=pt(e);if(a>P0&&a<P0+PS&&b>P0&&b<P0+PS){drag=true;sv.setPointerCapture(e.pointerId);if(anim){cancelAnimationFrame(anim);anim=null}x=[Math.max(-R,Math.min(R,IX(a))),Math.max(-R,Math.min(R,IY(b)))];draw()}});
+sv.addEventListener('pointermove',e=>{if(!drag)return;const[a,b]=pt(e);x=[Math.max(-R,Math.min(R,IX(a))),Math.max(-R,Math.min(R,IY(b)))];draw()});
+sv.addEventListener('pointerup',()=>drag=false);
+setCase(2);
+</script>
+
+</body></html>

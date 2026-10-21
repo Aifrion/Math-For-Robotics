@@ -1,0 +1,78 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Interpolation Explorer</title>
+<style>
+:root{--bg:#fff;--fg:#1f2937;--mut:#6b7280;--grid:#e5e7eb;--card:#f9fafb}
+@media (prefers-color-scheme:dark){:root{--bg:#191919;--fg:#e5e7eb;--mut:#9ca3af;--grid:#2f2f2f;--card:#222}}
+body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.4 -apple-system,Segoe UI,Helvetica,Arial,sans-serif}
+.wrap{padding:12px 16px;max-width:860px}
+.row{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:8px}
+label.t{display:flex;gap:6px;align-items:center;padding:4px 10px;border-radius:999px;background:var(--card);cursor:pointer;user-select:none}
+.sw{width:14px;height:4px;border-radius:2px;display:inline-block}
+button{border:1px solid var(--grid);background:var(--card);color:var(--fg);border-radius:8px;padding:5px 10px;cursor:pointer;font:inherit}
+canvas{width:100%;height:auto;border-radius:10px;background:var(--card);touch-action:none;display:block}
+.hint{color:var(--mut);font-size:12.5px;margin-top:6px}
+#msg{font-weight:600}
+</style></head><body><div class="wrap">
+<div class="row">
+ <label class="t"><input type="checkbox" id="cL" checked><span class="sw" style="background:#2563eb"></span>Linear</label>
+ <label class="t"><input type="checkbox" id="cP" checked><span class="sw" style="background:#dc2626"></span>One polynomial (Lagrange)</label>
+ <label class="t"><input type="checkbox" id="cS" checked><span class="sw" style="background:#16a34a"></span>Cubic spline</label>
+</div>
+<div class="row">
+ <button id="runge">Load Runge example (11 pts)</button>
+ <button id="few">Reset to 5 points</button>
+ <span id="msg"></span>
+</div>
+<canvas id="c" width="840" height="420"></canvas>
+<div class="hint">Drag a red dot to move it · click empty space to add a point · double-click a dot to delete it. Watch how the red polynomial starts swinging as you add points, while the green spline stays calm.</div>
+</div>
+<script>
+const cv=document.getElementById('c'),ctx=cv.getContext('2d');
+const X0=-1.1,X1=1.1,Y0=-0.8,Y1=2.3;
+let pts=[];
+function css(v){return getComputedStyle(document.documentElement).getPropertyValue(v).trim()}
+function sx(x){return (x-X0)/(X1-X0)*cv.width}
+function sy(y){return cv.height-(y-Y0)/(Y1-Y0)*cv.height}
+function ix(px){return X0+px/cv.width*(X1-X0)}
+function iy(py){return Y0+(cv.height-py)/cv.height*(Y1-Y0)}
+function few(){pts=[[-0.9,0.3],[-0.4,1.0],[0,0.5],[0.45,1.3],[0.9,0.6]];draw()}
+function runge(){pts=[];for(let i=0;i<11;i++){const x=-1+2*i/10;pts.push([x,1/(1+25*x*x)])}draw()}
+function sorted(){return pts.slice().sort((a,b)=>a[0]-b[0])}
+function lagr(P,x){let s=0;for(let k=0;k<P.length;k++){let L=1;for(let i=0;i<P.length;i++)if(i!==k)L*=(x-P[i][0])/(P[k][0]-P[i][0]);s+=P[k][1]*L}return s}
+function spline(P){ // natural cubic spline second derivatives via tridiagonal solve
+ const n=P.length,y2=new Array(n).fill(0),u=new Array(n).fill(0);
+ for(let i=1;i<n-1;i++){const sig=(P[i][0]-P[i-1][0])/(P[i+1][0]-P[i-1][0]);const p=sig*y2[i-1]+2;y2[i]=(sig-1)/p;
+  let d=(P[i+1][1]-P[i][1])/(P[i+1][0]-P[i][0])-(P[i][1]-P[i-1][1])/(P[i][0]-P[i-1][0]);u[i]=(6*d/(P[i+1][0]-P[i-1][0])-sig*u[i-1])/p}
+ y2[n-1]=0;for(let k=n-2;k>=0;k--)y2[k]=y2[k]*y2[k+1]+u[k];
+ return x=>{let j=0;while(j<n-2&&x>P[j+1][0])j++;const h=P[j+1][0]-P[j][0],A=(P[j+1][0]-x)/h,B=1-A;
+  return A*P[j][1]+B*P[j+1][1]+((A*A*A-A)*y2[j]+(B*B*B-B)*y2[j+1])*h*h/6}}
+function curve(f,col,a,b,w){ctx.strokeStyle=col;ctx.lineWidth=w;ctx.beginPath();let first=true;
+ for(let px=sx(a);px<=sx(b);px+=1.5){const y=f(ix(px));const py=Math.max(-50,Math.min(cv.height+50,sy(y)));first?ctx.moveTo(px,py):ctx.lineTo(px,py);first=false}ctx.stroke()}
+function draw(){
+ ctx.clearRect(0,0,cv.width,cv.height);
+ ctx.strokeStyle=css('--grid');ctx.lineWidth=1;
+ for(let y=-0.5;y<=2;y+=0.5){ctx.beginPath();ctx.moveTo(0,sy(y));ctx.lineTo(cv.width,sy(y));ctx.stroke()}
+ ctx.strokeStyle=css('--mut');ctx.beginPath();ctx.moveTo(0,sy(0));ctx.lineTo(cv.width,sy(0));ctx.stroke();
+ const P=sorted(),n=P.length;
+ if(n>=2){const a=P[0][0],b=P[n-1][0];
+  if(document.getElementById('cP').checked)curve(x=>lagr(P,x),'#dc2626',a,b,2.5);
+  if(document.getElementById('cS').checked&&n>=3)curve(spline(P),'#16a34a',a,b,3);
+  if(document.getElementById('cL').checked){ctx.strokeStyle='#2563eb';ctx.lineWidth=2;ctx.beginPath();P.forEach((p,i)=>i?ctx.lineTo(sx(p[0]),sy(p[1])):ctx.moveTo(sx(p[0]),sy(p[1])));ctx.stroke()}
+  let mx=0;for(let px=sx(a);px<=sx(b);px+=2)mx=Math.max(mx,Math.abs(lagr(P,ix(px))));
+  document.getElementById('msg').textContent=`${n} points → polynomial degree ${n-1} · its biggest |value| between points: ${mx.toFixed(2)}`}
+ for(const p of pts){ctx.fillStyle='#dc2626';ctx.beginPath();ctx.arc(sx(p[0]),sy(p[1]),7,0,7);ctx.fill();ctx.strokeStyle=css('--bg');ctx.lineWidth=2;ctx.stroke()}
+}
+function pos(e){const r=cv.getBoundingClientRect();return[(e.clientX-r.left)*cv.width/r.width,(e.clientY-r.top)*cv.height/r.height]}
+function hit(px,py){return pts.findIndex(p=>Math.hypot(sx(p[0])-px,sy(p[1])-py)<14)}
+let drag=-1;
+cv.addEventListener('pointerdown',e=>{const[px,py]=pos(e);drag=hit(px,py);
+ if(drag<0){const x=ix(px);if(pts.some(p=>Math.abs(p[0]-x)<0.03))return;pts.push([x,iy(py)]);drag=pts.length-1;draw()}cv.setPointerCapture(e.pointerId)});
+cv.addEventListener('pointermove',e=>{if(drag<0)return;const[px,py]=pos(e);let x=Math.max(-1.05,Math.min(1.05,ix(px)));
+ if(pts.some((p,i)=>i!==drag&&Math.abs(p[0]-x)<0.02))return;pts[drag]=[x,Math.max(Y0,Math.min(Y1,iy(py)))];draw()});
+cv.addEventListener('pointerup',()=>drag=-1);
+cv.addEventListener('dblclick',e=>{const[px,py]=pos(e);const i=hit(px,py);if(i>=0&&pts.length>2){pts.splice(i,1);draw()}});
+['cL','cP','cS'].forEach(id=>document.getElementById(id).onchange=draw);
+document.getElementById('runge').onclick=runge;document.getElementById('few').onclick=few;
+few();
+</script></body></html>
