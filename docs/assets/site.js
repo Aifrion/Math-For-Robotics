@@ -4,6 +4,7 @@
     { group: 'Course' },
     { href: 'index.html', title: 'Home' },
     { group: 'Lectures' },
+    { href: 'lec1.html', title: '1 · Transformations' },
     { href: 'lec2.html', title: '2 · Linear Systems', soon: true },
     { href: 'lec3.html', title: '3 · Interpolation', soon: true },
     { href: 'lec4.html', title: '4 · Function Approximation', soon: true },

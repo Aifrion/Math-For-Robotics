@@ -1,0 +1,62 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Rotation Order Matters</title>
+<style>
+:root{--text-primary:#1f2937;--text-secondary:#4b5563;--text-muted:#9ca3af;--text-accent:#1d4ed8;--bg-accent:#dbeafe;--border:#e5e7eb;--border-strong:#cbd5e1;--border-accent:#93c5fd;--radius:8px;--bg:#fff;--blue:#2563eb;--green:#16a34a;--amber:#BA7517;--red:#dc2626;--gray:#9ca3af;--purple:#7c3aed}
+@media (prefers-color-scheme:dark){:root{--text-primary:#e5e7eb;--text-secondary:#cbd5e1;--text-muted:#6b7280;--text-accent:#93c5fd;--bg-accent:#1e3a8a;--border:#2f2f2f;--border-strong:#4b5563;--border-accent:#3b82f6;--bg:#191919;--blue:#60a5fa;--green:#4ade80;--amber:#fbbf24;--red:#f87171;--gray:#6b7280;--purple:#a78bfa}}
+body{margin:0;padding:12px 16px;background:var(--bg);color:var(--text-primary);font:14px/1.5 -apple-system,Segoe UI,Helvetica,Arial,sans-serif;max-width:900px}
+.row{display:grid;grid-template-columns:120px 1fr 52px;gap:10px;align-items:center;margin:3px 0;font-size:13px}
+input[type=range]{width:100%}
+#cap{font-size:13px;color:var(--text-secondary);margin-top:4px;line-height:1.55}
+#diff{font-size:13.5px;margin-top:6px}
+</style></head><body>
+<div class="row"><span>θ₁ — about z</span><input type="range" id="t1" min="0" max="180" value="90"><b id="t1v"></b></div>
+<div class="row"><span>θ₂ — about x</span><input type="range" id="t2" min="0" max="180" value="90"><b id="t2v"></b></div>
+<svg id="sv" width="100%" viewBox="0 0 860 380"></svg>
+<div id="diff"></div>
+<div id="cap"></div>
+<script>
+let T1=90,T2=90;
+const sv=document.getElementById('sv');
+const css=v=>`var(--${v})`;
+const D=Math.PI/180;
+const mm=(X,Y)=>X.map(r=>r.map((_,j)=>r[0]*Y[0][j]+r[1]*Y[1][j]+r[2]*Y[2][j]));
+const Rz=t=>[[Math.cos(t),-Math.sin(t),0],[Math.sin(t),Math.cos(t),0],[0,0,1]];
+const Rx=t=>[[1,0,0],[0,Math.cos(t),-Math.sin(t)],[0,Math.sin(t),Math.cos(t)]];
+const mv=(M,v)=>[M[0][0]*v[0]+M[0][1]*v[1]+M[0][2]*v[2],M[1][0]*v[0]+M[1][1]*v[1]+M[1][2]*v[2],M[2][0]*v[0]+M[2][1]*v[1]+M[2][2]*v[2]];
+const ca=Math.cos(-0.42),sa=Math.sin(-0.42),cb=Math.cos(0.5),sb=Math.sin(0.5);
+function proj(p,cx,cy,s){const x1=cb*p[0]+sb*p[1],y1=-sb*p[0]+cb*p[1],z1=p[2];
+ const y2=ca*y1-sa*z1,z2=sa*y1+ca*z1;return[cx+x1*s,cy-z2*s]}
+function arrow3(p,cx,cy,s,col,w,lab){const o=proj([0,0,0],cx,cy,s),e=proj(p,cx,cy,s);
+ const d=Math.hypot(e[0]-o[0],e[1]-o[1]);if(d<4)return'';
+ const ux=(e[0]-o[0])/d,uy=(e[1]-o[1])/d,h=8;
+ let str=`<path d="M${o[0]} ${o[1]}L${e[0]} ${e[1]}M${e[0]-h*ux+h*0.5*uy} ${e[1]-h*uy-h*0.5*ux}L${e[0]} ${e[1]}L${e[0]-h*ux-h*0.5*uy} ${e[1]-h*uy+h*0.5*ux}" stroke="${col}" stroke-width="${w}" fill="none" stroke-linecap="round" stroke-linejoin="round"/>`;
+ if(lab)str+=`<text x="${e[0]+12*ux}" y="${e[1]+12*uy}" text-anchor="middle" style="font-size:12px;font-weight:600;fill:${col}">${lab}</text>`;
+ return str}
+function scene(cx,R,title,sub,col){
+ const cy=190,s=95;
+ let str=`<text x="${cx}" y="34" text-anchor="middle" style="font-size:14px;font-weight:600;fill:${col}">${title}</text>`;
+ str+=`<text x="${cx}" y="54" text-anchor="middle" style="font-size:12px;fill:var(--text-muted)">${sub}</text>`;
+ for(let k=-1;k<=1;k+=1){const p1=proj([k,-1,0],cx,cy,s),p2=proj([k,1,0],cx,cy,s),p3=proj([-1,k,0],cx,cy,s),p4=proj([1,k,0],cx,cy,s);
+  str+=`<path d="M${p1[0]} ${p1[1]}L${p2[0]} ${p2[1]}M${p3[0]} ${p3[1]}L${p4[0]} ${p4[1]}" stroke="var(--border)" stroke-width="0.7"/>`}
+ const pts=[[1.05,0,0],[-0.45,0.12,0],[-0.45,-0.12,0]].map(p=>mv(R,p));
+ const wing=[[0.25,0.75,0],[0.25,-0.75,0],[0,0,0]].map(p=>mv(R,p));
+ const poly=(ps,fill)=>{const q=ps.map(p=>proj(p,cx,cy,s));
+  return `<path d="M${q.map(p=>p[0].toFixed(1)+' '+p[1].toFixed(1)).join('L')}Z" fill="${fill}" fill-opacity="0.35" stroke="${fill}" stroke-width="1.5"/>`};
+ str+=poly(wing,col)+poly(pts,col);
+ str+=arrow3(mv(R,[1.15,0,0]),cx,cy,s,css('blue'),2,'x')+arrow3(mv(R,[0,1.15,0]),cx,cy,s,css('red'),2,'y')+arrow3(mv(R,[0,0,1.15]),cx,cy,s,css('green'),2,'z');
+ return str}
+function draw(){
+ t1v.textContent=T1+'°';t2v.textContent=T2+'°';
+ const A=mm(Rz(T1*D),Rx(T2*D)),B=mm(Rx(T2*D),Rz(T1*D));
+ let s=scene(215,A,'R_z(θ₁) · R_x(θ₂)','x-rotation first, then z',css('amber'));
+ s+=scene(645,B,'R_x(θ₂) · R_z(θ₁)','z-rotation first, then x',css('purple'));
+ sv.innerHTML=s;
+ let md=0;for(let i=0;i<3;i++)for(let j=0;j<3;j++)md=Math.max(md,Math.abs(A[i][j]-B[i][j]));
+ document.getElementById('diff').innerHTML=`max |R_zR_x − R_xR_z| = <b>${md.toFixed(3)}</b> ${md<1e-9?'— identical (a rotation about one axis, or zero, commutes)':'— genuinely different poses from the same two rotations'}`;
+ document.getElementById('cap').textContent='Matrix products apply right-to-left: R_z·R_x means "rotate about x first". With θ₁ = θ₂ = 90° the two orders leave the airplane pointing in completely different directions — rotations in 3-D do not commute. Set either slider to 0 and the difference vanishes.'}
+['t1','t2'].forEach(id=>document.getElementById(id).oninput=e=>{if(id==='t1')T1=+e.target.value;else T2=+e.target.value;draw()});
+draw();
+const post=()=>parent.postMessage({demoHeight:document.body.scrollHeight+8},'*');
+addEventListener('load',post);new ResizeObserver(post).observe(document.body);
+</script></body></html>

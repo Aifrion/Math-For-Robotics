@@ -1,0 +1,102 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Euler Angle Explorer</title>
+<style>
+:root{--text-primary:#1f2937;--text-secondary:#4b5563;--text-muted:#9ca3af;--text-accent:#1d4ed8;--bg-accent:#dbeafe;--border:#e5e7eb;--border-strong:#cbd5e1;--border-accent:#93c5fd;--radius:8px;--bg:#fff;--blue:#2563eb;--green:#16a34a;--amber:#BA7517;--red:#dc2626;--gray:#9ca3af}
+@media (prefers-color-scheme:dark){:root{--text-primary:#e5e7eb;--text-secondary:#cbd5e1;--text-muted:#6b7280;--text-accent:#93c5fd;--bg-accent:#1e3a8a;--border:#2f2f2f;--border-strong:#4b5563;--border-accent:#3b82f6;--bg:#191919;--blue:#60a5fa;--green:#4ade80;--amber:#fbbf24;--red:#f87171;--gray:#6b7280}}
+body{margin:0;padding:12px 16px;background:var(--bg);color:var(--text-primary);font:14px/1.5 -apple-system,Segoe UI,Helvetica,Arial,sans-serif;max-width:900px}
+.row{display:grid;grid-template-columns:150px 1fr 56px;gap:10px;align-items:center;margin:3px 0;font-size:13px}
+input[type=range]{width:100%}
+.btns{display:flex;gap:6px;flex-wrap:wrap;margin:6px 0}
+.btns button{font:inherit;font-size:13px;padding:4px 10px;border:0.5px solid var(--border-strong);border-radius:var(--radius);background:transparent;color:var(--text-primary);cursor:pointer}
+#cap{font-size:13px;color:var(--text-secondary);margin-top:4px;line-height:1.55}
+</style></head><body>
+<div class="row"><span>α — yaw, about world z</span><input type="range" id="a" min="-180" max="180" value="30"><b id="av"></b></div>
+<div class="row"><span>β — pitch, about new y′</span><input type="range" id="b" min="-180" max="180" value="-20"><b id="bv"></b></div>
+<div class="row"><span>γ — roll, about newest x″</span><input type="range" id="g" min="-180" max="180" value="25"><b id="gv"></b></div>
+<div class="btns"><button onclick="setE(30,-20,25)">reset</button><button onclick="setE(40,90,10)">β = 90°: gimbal lock</button><button id="wig">wiggle α and γ together</button></div>
+<svg id="sv" width="100%" viewBox="0 0 860 400"></svg>
+<div id="cap"></div>
+<script>
+let A=30,B=-20,G=25,anim=null;
+const sv=document.getElementById('sv');
+const css=v=>`var(--${v})`;
+const D=Math.PI/180;
+const mm=(X,Y)=>X.map((r,i)=>r.map((_,j)=>r[0]*Y[0][j]+r[1]*Y[1][j]+r[2]*Y[2][j]));
+const Rz=t=>[[Math.cos(t),-Math.sin(t),0],[Math.sin(t),Math.cos(t),0],[0,0,1]];
+const Ry=t=>[[Math.cos(t),0,Math.sin(t)],[0,1,0],[-Math.sin(t),0,Math.cos(t)]];
+const Rx=t=>[[1,0,0],[0,Math.cos(t),-Math.sin(t)],[0,Math.sin(t),Math.cos(t)]];
+const mv=(M,v)=>[M[0][0]*v[0]+M[0][1]*v[1]+M[0][2]*v[2],M[1][0]*v[0]+M[1][1]*v[1]+M[1][2]*v[2],M[2][0]*v[0]+M[2][1]*v[1]+M[2][2]*v[2]];
+// fixed isometric-ish camera
+const ca=Math.cos(-0.42),sa=Math.sin(-0.42),cb2=Math.cos(0.5),sb2=Math.sin(0.5);
+function proj(p,cx,cy,s){
+ // rotate by view: first yaw 0.5 about z-up... use: x' = view
+ const x1=cb2*p[0]+sb2*p[1], y1=-sb2*p[0]+cb2*p[1], z1=p[2];
+ const y2=ca*y1-sa*z1, z2=sa*y1+ca*z1;
+ return [cx+x1*s, cy-(z2)*s, y2]; // y2 = depth
+}
+const f2=n=>(Math.abs(n)<0.005?0:n).toFixed(2).replace('-','−');
+function arrow3(p,cx,cy,s,col,w,lab){
+ const o=proj([0,0,0],cx,cy,s),e=proj(p,cx,cy,s);
+ const d=Math.hypot(e[0]-o[0],e[1]-o[1]);if(d<4)return'';
+ const ux=(e[0]-o[0])/d,uy=(e[1]-o[1])/d,h=9;
+ let str=`<path d="M${o[0].toFixed(1)} ${o[1].toFixed(1)}L${e[0].toFixed(1)} ${e[1].toFixed(1)}M${(e[0]-h*ux+h*0.5*uy).toFixed(1)} ${(e[1]-h*uy-h*0.5*ux).toFixed(1)}L${e[0].toFixed(1)} ${e[1].toFixed(1)}L${(e[0]-h*ux-h*0.5*uy).toFixed(1)} ${(e[1]-h*uy+h*0.5*ux).toFixed(1)}" stroke="${col}" stroke-width="${w}" fill="none" stroke-linecap="round" stroke-linejoin="round"/>`;
+ if(lab)str+=`<text x="${(e[0]+12*ux).toFixed(1)}" y="${(e[1]+12*uy).toFixed(1)}" text-anchor="middle" style="font-size:12.5px;font-weight:600;fill:${col}">${lab}</text>`;
+ return str}
+function draw(){
+ av.textContent=A+'°';bv.textContent=B+'°';gv.textContent=G+'°';
+ const R=mm(mm(Rz(A*D),Ry(B*D)),Rx(G*D));
+ const cx=200,cy=200,s=120;
+ let str='';
+ // ground grid
+ for(let k=-1;k<=1;k+=0.5){
+  const p1=proj([k,-1,0],cx,cy,s),p2=proj([k,1,0],cx,cy,s),p3=proj([-1,k,0],cx,cy,s),p4=proj([1,k,0],cx,cy,s);
+  str+=`<path d="M${p1[0]} ${p1[1]}L${p2[0]} ${p2[1]}M${p3[0]} ${p3[1]}L${p4[0]} ${p4[1]}" stroke="var(--border)" stroke-width="0.7"/>`}
+ // world axes (gray)
+ str+=arrow3([1.25,0,0],cx,cy,s,css('gray'),1.3,'x₀')+arrow3([0,1.25,0],cx,cy,s,css('gray'),1.3,'y₀')+arrow3([0,0,1.25],cx,cy,s,css('gray'),1.3,'z₀');
+ // body frame
+ const ex=mv(R,[1,0,0]),ey=mv(R,[0,1,0]),ez=mv(R,[0,0,1]);
+ // airplane: fuselage along x, wings along y
+ const pts=[[1.05,0,0],[-0.45,0.12,0],[-0.45,-0.12,0]].map(p=>mv(R,p));
+ const wing=[[0.25,0.75,0],[0.25,-0.75,0],[0.0,0,0]].map(p=>mv(R,p));
+ const poly=(ps,fill)=>{const q=ps.map(p=>proj(p,cx,cy,s));
+  return `<path d="M${q.map(p=>p[0].toFixed(1)+' '+p[1].toFixed(1)).join('L')}Z" fill="${fill}" fill-opacity="0.35" stroke="${fill}" stroke-width="1.5"/>`};
+ str+=poly(wing,css('amber'))+poly(pts,css('amber'));
+ str+=arrow3(ex,cx,cy,s,css('blue'),2.6,'x')+arrow3(ey,cx,cy,s,css('red'),2.6,'y')+arrow3(ez,cx,cy,s,css('green'),2.6,'z');
+ // the three rotation axes as they currently stand
+ const ax1=[0,0,1];                       // world z (alpha axis)
+ const ax2=mv(Rz(A*D),[0,1,0]);           // y' (beta axis)
+ const ax3=mv(mm(Rz(A*D),Ry(B*D)),[1,0,0]); // x'' (gamma axis)
+ const dot=Math.abs(ax1[0]*ax3[0]+ax1[1]*ax3[1]+ax1[2]*ax3[2]);
+ const sep=Math.acos(Math.min(1,dot))/D;
+ // matrix readout
+ const P=470;
+ str+=`<text x="${P}" y="46" style="font-size:13.5px;font-weight:600;fill:var(--text-primary)">R = R_z(α) R_y(β) R_x(γ)</text>`;
+ for(let i=0;i<3;i++)for(let j=0;j<3;j++)
+  str+=`<text x="${P+30+j*80}" y="${80+i*26}" text-anchor="end" style="font-size:14px;fill:var(--text-primary);font-variant-numeric:tabular-nums">${f2(R[i][j])}</text>`;
+ str+=`<path d="M${P-6} 62V${80+2*26+8}M${P+30+2*80+10} 62V${80+2*26+8}" stroke="var(--text-muted)" stroke-width="1.2" fill="none"/>`;
+ str+=`<text x="${P}" y="196" style="font-size:13px;fill:var(--text-secondary)">angle between the α-axis (world z)</text>`;
+ str+=`<text x="${P}" y="214" style="font-size:13px;fill:var(--text-secondary)">and the γ-axis (body x″): <tspan style="font-weight:700;fill:${sep<15?'var(--text-danger,#dc2626)':'var(--text-primary)'}">${sep.toFixed(1)}°</tspan></text>`;
+ if(sep<15){str+=`<text x="${P}" y="240" style="font-size:13px;fill:${css('red')}">⚠ axes nearly aligned — gimbal lock:</text>`;
+  str+=`<text x="${P}" y="258" style="font-size:13px;fill:${css('red')}">α and γ now turn the plane the same way</text>`}
+ else str+=`<text x="${P}" y="240" style="font-size:13px;fill:var(--text-muted)">axes independent: three usable DOF</text>`;
+ str+=`<text x="${P}" y="286" style="font-size:12px;fill:var(--text-muted)">check: det R = ${f2(det3(R))}, columns orthonormal ✓</text>`;
+ sv.innerHTML=str;
+ document.getElementById('cap').textContent= sep<15?
+  'β ≈ ±90° tips the roll axis (x″) parallel to the yaw axis (world z). Two of your three knobs now do the same thing — press "wiggle α and γ together" and watch the plane hold perfectly still while both sliders sweep. The matrix stays legal; it’s the three-number chart that collapsed. This is why spacecraft and gimbals carry a fourth number (quaternions).':
+  'The ZYX convention: yaw α about world z, then pitch β about the once-rotated y′, then roll γ about the twice-rotated x″. Drag the sliders and watch both the airplane and the matrix. Then hit the gimbal-lock preset.'}
+function det3(M){return M[0][0]*(M[1][1]*M[2][2]-M[1][2]*M[2][1])-M[0][1]*(M[1][0]*M[2][2]-M[1][2]*M[2][0])+M[0][2]*(M[1][0]*M[2][1]-M[1][1]*M[2][0])}
+function setE(a,b,g){if(anim){cancelAnimationFrame(anim);anim=null}A=a;B=b;G=g;
+ document.getElementById('a').value=a;document.getElementById('b').value=b;document.getElementById('g').value=g;draw()}
+['a','b','g'].forEach(id=>document.getElementById(id).oninput=e=>{if(anim){cancelAnimationFrame(anim);anim=null}
+ if(id==='a')A=+e.target.value;if(id==='b')B=+e.target.value;if(id==='g')G=+e.target.value;draw()});
+document.getElementById('wig').onclick=()=>{if(anim){cancelAnimationFrame(anim);anim=null;return}
+ const a0=A,g0=G,t0=performance.now();
+ const go=now=>{const k=40*Math.sin((now-t0)/500);A=a0+k;G=g0+k;
+  document.getElementById('a').value=A;document.getElementById('g').value=G;draw();
+  if(now-t0<6000)anim=requestAnimationFrame(go);else{anim=null}};
+ anim=requestAnimationFrame(go)};
+draw();
+const post=()=>parent.postMessage({demoHeight:document.body.scrollHeight+8},'*');
+addEventListener('load',post);new ResizeObserver(post).observe(document.body);
+</script></body></html>

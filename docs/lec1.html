@@ -1,0 +1,166 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Lecture 1 — Transformations | Math for Robotics</title>
+<link rel="stylesheet" href="assets/site.css">
+<link rel="stylesheet" href="vendor/katex/katex.min.css">
+<script defer src="vendor/katex/katex.min.js"></script>
+<script defer src="vendor/katex/auto-render.min.js"></script>
+<script defer src="assets/site.js"></script>
+</head><body>
+<div class="layout">
+<main><div class="content">
+
+<h1>Lecture 1: Positions, Rotations &amp; Transformations</h1>
+
+<div class="callout summary"><span class="tag">The one-sentence version:</span>
+everything a robot knows lives in some coordinate frame, so the first tool of the course is the
+machinery for moving between frames — rotation matrices, Euler angles (and their trap),
+quaternions, and the 4×4 homogeneous transform that carries rotation and translation together.
+<br><span class="small muted">CSE 276C, Lecture 1 · Prof. Henrik Christensen · texts: Numerical Recipes; Bewley, Numerical Renaissance; Deisenroth et al., Mathematics for ML.
+All numbers verified in <code>scripts/lec1/verify.py</code>.</span></div>
+
+<div class="toc"><b>Contents</b><ol>
+<li><a href="#course">The course in one slide</a></li>
+<li><a href="#frames">Positions and reference frames</a></li>
+<li><a href="#rot">Rotation matrices</a></li>
+<li><a href="#compose">Composing rotations: order matters</a></li>
+<li><a href="#euler">Euler angles &amp; gimbal lock</a></li>
+<li><a href="#quat">Quaternions</a></li>
+<li><a href="#homog">Homogeneous transforms &amp; joints</a></li>
+<li><a href="#summary">Summary</a></li>
+</ol></div>
+
+<h2 id="course">1 · The course in one slide</h2>
+<p>Topics: linear systems, subspace methods, optimization, root finding, integration,
+differential geometry, space &amp; search — the basic math toolbox for perception, planning and
+control. Five homeworks, roughly bi-weekly, mixing hand analysis with Python/NumPy on real
+robotics data (HW2's trajectory file is exactly that). Today's lecture sets up the one piece of
+machinery everything else silently assumes: coordinate frames and how to convert between them.</p>
+<table>
+<tr><th>robotics problem</th><th>what you have</th><th>what you need</th><th>tool</th></tr>
+<tr><td>"where is the object the camera sees?"</td><td>point in camera frame</td><td>point in robot/world frame</td><td>homogeneous transform chain</td></tr>
+<tr><td>describe a drone's attitude</td><td>a rotation</td><td>3 readable numbers</td><td>Euler angles (mind the lock)</td></tr>
+<tr><td>interpolate / compose attitudes safely</td><td>rotations</td><td>singularity-free algebra</td><td>quaternions</td></tr>
+<tr><td>model an arm link by link</td><td>joint values</td><td>end-effector pose</td><td>products of joint transforms</td></tr>
+</table>
+
+<h2 id="frames">2 · Positions and reference frames</h2>
+<p>A position is always <em>of something, with respect to something</em>:</p>
+$${}^j p_i = \begin{pmatrix} {}^j p_{x_i} \\ {}^j p_{y_i} \\ {}^j p_{z_i} \end{pmatrix}
+\quad\text{— the position of } i \text{ expressed in frame } j$$
+<p>The leading superscript is the frame doing the measuring; the subscript is the thing measured.
+Robots are forests of frames — the slides' AIBO dog has one per joint — and bugs in frame
+bookkeeping are the classic robotics bug. Read \({}^k R_j\,{}^j R_i\) like plumbing: the inner
+j's must match, and they "cancel", leaving \({}^k R_i\).</p>
+
+<h2 id="rot">3 · Rotation matrices</h2>
+<p>The rotation between frames i and j is the matrix of all basis-vector dot products
+(\({}^j R_i\) with entries like \(\vec x_i \cdot \vec x_j\)) — i.e. each column is one of frame i's
+axes expressed in frame j. The three elementary rotations:</p>
+$$R_z(\theta) = \begin{pmatrix} c_\theta & -s_\theta & 0\\ s_\theta & c_\theta & 0\\ 0&0&1\end{pmatrix},\quad
+R_y(\theta) = \begin{pmatrix} c_\theta & 0 & s_\theta\\ 0&1&0\\ -s_\theta & 0 & c_\theta\end{pmatrix},\quad
+R_x(\theta) = \begin{pmatrix} 1&0&0\\ 0&c_\theta & -s_\theta\\ 0&s_\theta & c_\theta\end{pmatrix}$$
+<table>
+<tr><th>property</th><th>meaning</th></tr>
+<tr><td>columns orthonormal, det = +1</td><td>rotations preserve lengths and handedness — a free sanity check for your code</td></tr>
+<tr><td>\(R^{-1} = R^T\)</td><td>inverting a rotation is free</td></tr>
+<tr><td>9 numbers, 3 DOF</td><td>redundant but singularity-free — the "true" representation the others approximate</td></tr>
+</table>
+<div class="callout gotcha"><span class="tag">⚠️ Gotcha:</span> the odd-one-out sign in
+\(R_y\) (the −s on the <em>bottom</em> left) is not a typo — it's what keeps the cyclic pattern
+x→y→z→x consistent. Memorize the pattern, not the matrices.</div>
+
+<h2 id="compose">4 · Composing rotations: order matters</h2>
+$${}^k R_i = {}^k R_j\,{}^j R_i, \qquad\text{but}\qquad {}^k R_j\,{}^j R_i \ne {}^j R_i\,{}^k R_j$$
+<p>Matrix products apply right-to-left, and in 3-D they do not commute.</p>
+<p class="try">🕹️ <b>Try it:</b> the same two 90° rotations in both orders. The planes end up in genuinely different poses (max matrix difference 1.0 — verified).</p>
+<div class="demo-wrap"><iframe class="demo" src="demos/lec1/rotation_order.html" height="540" title="Rotation order"></iframe></div>
+
+<h2 id="euler">5 · Euler angles: three readable numbers, one trap</h2>
+<p>The slides' convention is ZYX: \(R = R_z(\alpha)R_y(\beta)R_x(\gamma)\) — yaw, then pitch
+about the new y, then roll about the newest x. Extraction from a rotation matrix:</p>
+$$\beta = \mathrm{atan2}\!\left(-r_{31}, \sqrt{r_{11}^2 + r_{21}^2}\right),\quad
+\alpha = \mathrm{atan2}\!\left(\tfrac{r_{21}}{\cos\beta}, \tfrac{r_{11}}{\cos\beta}\right),\quad
+\gamma = \mathrm{atan2}\!\left(\tfrac{r_{32}}{\cos\beta}, \tfrac{r_{33}}{\cos\beta}\right)$$
+<p class="small muted">Round trip verified: (0.4, −0.7, 1.1) → R → (0.4, −0.7, 1.1) ✓. Note the cos β divisions: the formulas die exactly where the representation does.</p>
+<p><b>The trap:</b> at β = ±90° the roll axis lines up with the yaw axis — two of your three
+numbers then do the same thing, and one degree of freedom vanishes from the <em>chart</em>
+(the rotation itself is fine). Verified to machine precision:
+\(R(\alpha{=}0.3, 90°, \gamma{=}0.5) = R(0.8, 90°, 1.0)\) exactly. Same disease as
+latitude/longitude at the poles (the slides' globe).</p>
+
+<p class="try">🕹️ <b>Try it:</b> hit the gimbal-lock preset, then "wiggle α and γ together" — both sliders sweep while the airplane holds perfectly still.</p>
+<div class="demo-wrap"><iframe class="demo" src="demos/lec1/euler_explorer.html" height="560" title="Euler explorer"></iframe></div>
+
+<h2 id="quat">6 · Quaternions: the singularity-free fix</h2>
+<p>No 3-parameter representation can avoid singularities (proved); a 4-parameter one can.
+Hamilton's quaternions (1843): \(\vec\epsilon = \epsilon_0 + \epsilon_1\vec i + \epsilon_2\vec j + \epsilon_3\vec k\)
+with \(\vec i\vec i = \vec j\vec j = \vec k\vec k = -1\), \(\vec i\vec j = \vec k\) (and
+anti-cyclic products negative). A rotation by θ about unit axis \(\vec a\):</p>
+$$\vec\epsilon = \Big(\cos\tfrac\theta2,\; \vec a \sin\tfrac\theta2\Big)$$
+<table>
+<tr><th>operation</th><th>how</th></tr>
+<tr><td>compose rotations</td><td>quaternion product (the slides' 16-term formula) — verified: q_a q_b ↔ R_a R_b</td></tr>
+<tr><td>quaternion → matrix</td><td>the slides' \(1 - 2(\epsilon_2^2+\epsilon_3^2)\)… formula — verified against R_z(90°)</td></tr>
+<tr><td>matrix → quaternion</td><td>\(\epsilon_0 = \tfrac12\sqrt{1 + r_{11} + r_{22} + r_{33}}\), then \(\epsilon_1 = \tfrac{r_{32}-r_{23}}{4\epsilon_0}\), … — round trip verified</td></tr>
+<tr><td>inverse</td><td>negate the vector part (unit quaternions)</td></tr>
+</table>
+<div class="callout insight"><span class="tag">💡 Why bother:</span> 4 numbers, one constraint
+(unit norm), <em>no</em> gimbal lock, numerically stable composition, and clean interpolation
+(slerp) — which is why graphics, vision, and every flight controller use them. As the slides say
+twice: the good news is there are standard libraries. Know what they fix; don't hand-roll them.</div>
+
+<h2 id="homog">7 · Homogeneous transforms &amp; joints</h2>
+<p>Rotation plus translation, \({}^j\vec p = {}^jR_i\,{}^i\vec p + \vec t\), becomes a single
+matrix product by appending a 1 to every point:</p>
+$$\begin{pmatrix} {}^j p \\ 1 \end{pmatrix} =
+\begin{pmatrix} {}^jR_i & t \\ 0 & 1 \end{pmatrix}
+\begin{pmatrix} {}^i p \\ 1 \end{pmatrix}
+\qquad\text{i.e.}\qquad {}^jP = {}^jT_i\,{}^iP$$
+<p>Now chains of frames are chains of matrix products. Standard joints are just parameterized T's:
+<b>revolute</b> (R_z(θ), no translation), <b>prismatic</b> (identity rotation, translation d along an axis),
+<b>cylindrical</b> (R_θ plus d along z), <b>spherical</b> (full 3-DOF rotation) — and most mechanisms,
+like the slides' 6-axis KUKA KR15, are products of these.</p>
+<details><summary>Worked example: rotate-then-translate (click to open)</summary><div class="body">
+<p>T with R = R_z(90°), t = (1, 2, 0). Then (1, 0, 0) → R·p + t = (0, 1, 0) + (1, 2, 0) =
+<b>(1, 3, 0)</b> ✓. And the inverse is not "negate t": \(T^{-1} = \big[\,R^T \;\; -R^T t\,\big]\)
+(verified T⁻¹T = I). Translation happens in the <em>rotated</em> frame — a classic bug source.</p></div></details>
+<p class="small muted">Closing teaser (slides): velocities will come later — forward kinematics \(v = \Phi\dot q\), inverse \(\dot q = \Phi^{-1}v\). That Φ is Lecture 2's matrix A: the whole linear-systems lecture is secretly about this equation.</p>
+
+<h2 id="summary">8 · Summary</h2>
+<ul>
+<li>Every quantity carries a frame; transforms move quantities between frames, and superscript/subscript plumbing keeps you honest.</li>
+<li>Rotation matrices: orthonormal, det +1, inverse = transpose, singularity-free, composable — but 9 numbers and order-sensitive.</li>
+<li>Euler angles: 3 readable numbers, ZYX convention here, extraction via atan2 — and a genuine DOF loss at β = ±90°.</li>
+<li>Quaternions: (cos θ/2, a sin θ/2); slightly alien algebra, zero singularities; use a library.</li>
+<li>Homogeneous 4×4s unify R and t; joints are parameterized transforms; robots are products of them.</li>
+</ul>
+<table>
+<tr><th>representation</th><th>numbers</th><th>singularities</th><th>use it when</th></tr>
+<tr><td>rotation matrix</td><td>9 (3 DOF)</td><td>none</td><td>transforming points, composing, checking (det, orthonormality)</td></tr>
+<tr><td>Euler angles</td><td>3</td><td>β = ±90°</td><td>human-readable I/O, UIs, small-angle work</td></tr>
+<tr><td>quaternion</td><td>4 + unit norm</td><td>none</td><td>storage, composition, interpolation, controllers</td></tr>
+<tr><td>homogeneous T</td><td>16 (6 DOF)</td><td>none</td><td>full poses and kinematic chains</td></tr>
+</table>
+
+<details><summary>⚠️ Typos in the slides to watch out for</summary><div class="body"><ul>
+<li>Slide 21: the rotation matrix's third row reads "r₃₁ r₂₃ r₃₃" → should be r₃₁ <b>r₃₂</b> r₃₃.</li>
+<li>Slide 26 (quaternion product): the j-component line "(a₀b₂ + a₂b₀ + a₃b₁ − a₁b₃)" is correct Hamilton convention — but note the slide's k-line "(a₀b₃ + a₃b₀ + a₁b₂ − a₂b₁)" and i-line must be read with consistent sign convention; verified the printed formula is the standard Hamilton product.</li>
+<li>Slide 25: "unit quar<b>t</b>ernion" → quaternion.</li>
+<li>Slide 36: "How can we compute<b>r</b> the velocity" → compute.</li>
+</ul></div></details>
+
+<details><summary>🧠 Self-check questions</summary><div class="body">
+<details><summary>1 · Your code produces a "rotation" matrix with det = −1. What happened?</summary><div class="body">A reflection snuck in (often from swapping two axes or a left-handed frame). Lengths are preserved but handedness flips — downstream cross-products will silently point the wrong way.</div></details>
+<details><summary>2 · Why can't any 3-number attitude representation be singularity-free?</summary><div class="body">Topology: the rotation group SO(3) can't be covered by a single 3-D chart without degenerate points (same reason a globe can't have a flat map without poles misbehaving). Four numbers with a constraint — quaternions — sidestep it.</div></details>
+<details><summary>3 · At gimbal lock, is the aircraft's rotation itself degenerate?</summary><div class="body">No — the rotation matrix is perfectly healthy. Only the Euler-angle <em>chart</em> degenerates: α and γ become redundant (only α − γ matters at β = +90°), so rates about one world axis become unrepresentable as finite angle-rates.</div></details>
+<details><summary>4 · {}^kR_j and {}^jR_i are known. Express frame k's view of a point measured in frame i, and say why the other product order is meaningless.</summary><div class="body">{}^k p = {}^kR_j {}^jR_i {}^i p. The inner frame indices must match (j with j); the reversed product pairs mismatched frames — the "units" of the plumbing don't cancel.</div></details>
+<details><summary>5 · T = [R t; 0 1]. Why is T⁻¹ = [Rᵀ −Rᵀt; 0 1] and not [Rᵀ −t; 0 1]?</summary><div class="body">Undoing "rotate then translate" requires translating back <em>in the already-unrotated frame</em>: p = Rp′ + t ⇒ p′ = Rᵀp − Rᵀt. Verified numerically on the worked example.</div></details>
+</div></details>
+
+<div class="prevnext"><a href="index.html">Home</a><a href="lec2.html">Lecture 2: Linear Systems →</a></div>
+
+</div></main>
+</div>
+</body></html>
