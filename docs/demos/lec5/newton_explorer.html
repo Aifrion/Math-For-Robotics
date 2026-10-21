@@ -1,0 +1,82 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Newton-Raphson Explorer</title>
+<style>
+:root{--text-primary:#1f2937;--text-secondary:#4b5563;--text-muted:#9ca3af;--text-success:#15803d;--text-danger:#b91c1c;--text-accent:#1d4ed8;--bg-accent:#dbeafe;--border:#e5e7eb;--border-strong:#cbd5e1;--border-accent:#93c5fd;--radius:8px;--bg:#fff;--blue:#2563eb;--green:#16a34a;--amber:#BA7517;--red:#dc2626}
+@media (prefers-color-scheme:dark){:root{--text-primary:#e5e7eb;--text-secondary:#cbd5e1;--text-muted:#6b7280;--text-success:#4ade80;--text-danger:#f87171;--text-accent:#93c5fd;--bg-accent:#1e3a8a;--border:#2f2f2f;--border-strong:#4b5563;--border-accent:#3b82f6;--bg:#191919;--blue:#60a5fa;--green:#4ade80;--amber:#fbbf24;--red:#f87171}}
+body{margin:0;padding:12px 16px;background:var(--bg);color:var(--text-primary);font:14px/1.5 -apple-system,Segoe UI,Helvetica,Arial,sans-serif;max-width:900px}
+.row{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:6px}
+.row button{font:inherit;font-size:13px;padding:4px 10px;border:0.5px solid var(--border-strong);border-radius:var(--radius);background:transparent;color:var(--text-primary);cursor:pointer}
+.row button.on{background:var(--bg-accent);color:var(--text-accent);border-color:var(--border-accent)}
+#out{font-size:13.5px;margin-top:6px;font-variant-numeric:tabular-nums}
+#cap{font-size:13px;color:var(--text-secondary);margin-top:4px;line-height:1.55}
+</style></head><body>
+<div class="row">
+ <button data-p="0" class="on">nice: x³−2x−5</button>
+ <button data-p="1">cycle: x³−2x+2</button>
+ <button data-p="2">runaway: atan x</button></div>
+<svg id="sv" width="100%" viewBox="0 0 860 380" style="touch-action:none"></svg>
+<div id="out"></div>
+<div id="cap"></div>
+<script>
+const PRESETS=[
+ {f:x=>x*x*x-2*x-5,fp:x=>3*x*x-2,x0:3.4,xr:[-1,4],yr:[-12,30],root:2.0945514815,
+  cap:'Drag the amber x₀. From almost anywhere, each tangent lands closer and the error squares itself: 3 → 2.19 → 2.097 → 2.0946. That is quadratic convergence — the number of correct digits doubles per step.'},
+ {f:x=>x*x*x-2*x+2,fp:x=>3*x*x-2,x0:0,xr:[-2.6,2.2],yr:[-4,6],root:-1.7692923542,
+  cap:'The slide\'s warning made real: from x₀ = 0 the tangent sends you to 1, and from 1 straight back to 0 — a permanent 2-cycle that never finds the root at −1.769. Drag x₀ slightly left of −0.6 and it snaps out and converges. Newton is local: the seed decides everything.'},
+ {f:Math.atan,fp:x=>1/(1+x*x),x0:1.5,xr:[-7,7],yr:[-2.2,2.2],root:0,
+  cap:'atan flattens far from 0, so the tangent overshoots to the other side — and if |x₀| > 1.392 each overshoot is bigger than the last: divergence. Drag x₀ inside ±1.39 and it converges. Flat tails (saturated sensors, sigmoid costs) are classic Newton killers.'}];
+let pi=0,x0=PRESETS[0].x0,drag=false;
+const sv=document.getElementById('sv');
+const css=v=>`var(--${v})`;
+const L=46,T=16,W=800,H=300;
+function draw(){const P=PRESETS[pi],f=P.f,fp=P.fp;
+ const X=x=>L+(x-P.xr[0])/(P.xr[1]-P.xr[0])*W,Y=y=>T+(P.yr[1]-y)/(P.yr[1]-P.yr[0])*H,IX=px=>P.xr[0]+(px-L)/W*(P.xr[1]-P.xr[0]);
+ sv._IX=IX;
+ let s=`<defs><clipPath id="cp"><rect x="${L}" y="${T}" width="${W}" height="${H}"/></clipPath></defs>`;
+ s+=`<rect x="${L}" y="${T}" width="${W}" height="${H}" fill="none" stroke="var(--border)" stroke-width="0.5"/>`;
+ s+=`<path d="M${L} ${Y(0)}H${L+W}" stroke="var(--text-muted)" stroke-width="0.8"/>`;
+ s+=`<g clip-path="url(#cp)">`;
+ let d='';for(let i=0;i<=200;i++){const x=P.xr[0]+(P.xr[1]-P.xr[0])*i/200,y=Math.max(P.yr[0]*1.3,Math.min(P.yr[1]*1.3,f(x)));d+=(i?'L':'M')+X(x).toFixed(1)+' '+Y(y).toFixed(1)}
+ s+=`<path d="${d}" stroke="var(--text-primary)" stroke-width="2.2" fill="none"/>`;
+ // newton cascade
+ let x=x0;const its=[x];let status='';
+ for(let k=0;k<9;k++){const fx=f(x),dfx=fp(x);
+  if(Math.abs(dfx)<1e-12){status='flat: f′ = 0, step undefined';break}
+  const xn=x-fx/dfx;
+  const op=Math.max(0.25,1-k*0.1);
+  s+=`<path d="M${X(x)} ${Y(0)}V${Y(fx)}" stroke="${css('blue')}" stroke-width="1" stroke-dasharray="3 3" opacity="${op}"/>`;
+  s+=`<path d="M${X(x)} ${Y(fx)}L${X(xn)} ${Y(0)}" stroke="${css('green')}" stroke-width="1.8" opacity="${op}"/>`;
+  s+=`<circle cx="${X(xn)}" cy="${Y(0)}" r="3.5" fill="${css('green')}" opacity="${op}"/>`;
+  its.push(xn);
+  if(!isFinite(xn)||Math.abs(xn)>1e6){status='diverged off the chart';break}
+  if(Math.abs(xn-x)<1e-12){x=xn;break}
+  x=xn}
+ s+=`</g>`;
+ s+=`<circle cx="${X(P.root)}" cy="${Y(0)}" r="4.5" fill="none" stroke="${css('red')}" stroke-width="1.8"/>`;
+ s+=`<text x="${X(P.root)}" y="${Y(0)+20}" text-anchor="middle" style="font-size:11px;fill:${css('red')}">root</text>`;
+ s+=`<circle cx="${X(x0)}" cy="${Y(0)}" r="8" fill="${css('amber')}" style="cursor:grab"/>`;
+ s+=`<text x="${X(x0)}" y="${Y(0)-12}" text-anchor="middle" style="font-size:12px;font-weight:600;fill:${css('amber')}">x₀</text>`;
+ sv.innerHTML=s;
+ const last=its[its.length-1];
+ if(!status){
+  if(Math.abs(last-P.root)<1e-8)status=`converged to ${last.toFixed(6)} in ${its.length-1} steps ✓`;
+  else if(its.length>=9&&Math.abs(its[its.length-1]-its[its.length-3])<1e-9)status='stuck in a cycle — never converges';
+  else status=`after ${its.length-1} steps: ${Math.abs(last)>50?'diverging':'still wandering at '+last.toFixed(4)}`}
+ const ok=status.includes('✓');
+ document.getElementById('out').innerHTML=
+  'x: '+its.slice(0,6).map(v=>Math.abs(v)>1e4?v.toExponential(1):v.toFixed(4)).join(' → ')+(its.length>6?' → …':'')+
+  `<br>status: <b style="color:${ok?'var(--text-success)':'var(--text-danger)'}">${status}</b>`;
+ document.getElementById('cap').textContent=PRESETS[pi].cap}
+document.querySelectorAll('[data-p]').forEach(b=>b.onclick=()=>{pi=+b.dataset.p;x0=PRESETS[pi].x0;
+ document.querySelectorAll('[data-p]').forEach(x=>x.classList.toggle('on',x===b));draw()});
+function px(e){const r=sv.getBoundingClientRect();return (e.clientX-r.left)*860/r.width}
+sv.addEventListener('pointerdown',e=>{drag=true;sv.setPointerCapture(e.pointerId);
+ x0=Math.max(PRESETS[pi].xr[0],Math.min(PRESETS[pi].xr[1],sv._IX(px(e))));draw()});
+sv.addEventListener('pointermove',e=>{if(!drag)return;
+ x0=Math.max(PRESETS[pi].xr[0],Math.min(PRESETS[pi].xr[1],sv._IX(px(e))));draw()});
+sv.addEventListener('pointerup',()=>drag=false);
+draw();
+const post=()=>parent.postMessage({demoHeight:document.body.scrollHeight+8},'*');
+addEventListener('load',post);new ResizeObserver(post).observe(document.body);
+</script></body></html>

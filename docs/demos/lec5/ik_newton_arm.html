@@ -1,0 +1,89 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>IK by Newton</title>
+<style>
+:root{--text-primary:#1f2937;--text-secondary:#4b5563;--text-muted:#9ca3af;--text-success:#15803d;--text-danger:#b91c1c;--text-accent:#1d4ed8;--bg-accent:#dbeafe;--border:#e5e7eb;--border-strong:#cbd5e1;--border-accent:#93c5fd;--radius:8px;--bg:#fff;--blue:#2563eb;--green:#16a34a;--amber:#BA7517;--red:#dc2626;--gray:#888780}
+@media (prefers-color-scheme:dark){:root{--text-primary:#e5e7eb;--text-secondary:#cbd5e1;--text-muted:#6b7280;--text-success:#4ade80;--text-danger:#f87171;--text-accent:#93c5fd;--bg-accent:#1e3a8a;--border:#2f2f2f;--border-strong:#4b5563;--border-accent:#3b82f6;--bg:#191919;--blue:#60a5fa;--green:#4ade80;--amber:#fbbf24;--red:#f87171;--gray:#9ca3af}}
+body{margin:0;padding:12px 16px;background:var(--bg);color:var(--text-primary);font:14px/1.5 -apple-system,Segoe UI,Helvetica,Arial,sans-serif;max-width:900px}
+.row{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:6px}
+.row button{font:inherit;font-size:13px;padding:4px 10px;border:0.5px solid var(--border-strong);border-radius:var(--radius);background:transparent;color:var(--text-primary);cursor:pointer}
+.row button.on{background:var(--bg-accent);color:var(--text-accent);border-color:var(--border-accent)}
+#cap{font-size:13px;color:var(--text-secondary);margin-top:4px;line-height:1.55}
+table{border-collapse:collapse;font-size:12.5px;font-variant-numeric:tabular-nums}
+td,th{padding:2px 10px;text-align:right;border-bottom:1px solid var(--border)}
+</style></head><body>
+<div class="row"><span style="font-size:13px">seed elbow angle</span>
+ <button data-s="2.6" class="on">θ₀ = 2.6 (bent)</button>
+ <button data-s="0.15">θ₀ = 0.15 (almost straight)</button></div>
+<svg id="sv" width="100%" viewBox="0 0 860 400" style="touch-action:none"></svg>
+<div id="cap"></div>
+<script>
+let target=[1.25,0.45],seed=2.6,drag=false;
+const sv=document.getElementById('sv');
+const css=v=>`var(--${v})`;
+const B=[260,215],S=120;
+const Wp=p=>[B[0]+p[0]*S,B[1]-p[1]*S];
+const f=(t,d2)=>2+2*Math.cos(t)-d2, fp=t=>-2*Math.sin(t);
+const fm=n=>n.toFixed(4).replace('-','−');
+function fk(q1,q2){const e=[Math.cos(q1),Math.sin(q1)];
+ return [e,[e[0]+Math.cos(q1+q2),e[1]+Math.sin(q1+q2)]]}
+function draw(){
+ const d=Math.hypot(target[0],target[1]),d2=d*d;
+ // newton iterations on elbow angle
+ let t=seed;const its=[t];let fail='';
+ for(let k=0;k<8;k++){const ft=f(t,d2),dft=fp(t);
+  if(Math.abs(dft)<1e-9){fail='f′(θ) = −2 sin θ ≈ 0 — the tangent is flat, the step blows up';break}
+  const tn=t-ft/dft;its.push(tn);
+  if(Math.abs(tn-t)<1e-12){t=tn;break}
+  t=tn}
+ t=((t%(2*Math.PI))+2*Math.PI)%(2*Math.PI);if(t>Math.PI)t=2*Math.PI-t; // fold to [0,pi]
+ const reachable=d<=2&&d>=0.05;
+ const q2=-t;
+ const q1=Math.atan2(target[1],target[0])-Math.atan2(Math.sin(q2),1+Math.cos(q2));
+ let s='';
+ // workspace annulus
+ s+=`<circle cx="${B[0]}" cy="${B[1]}" r="${2*S}" fill="${css('blue')}" opacity="0.06"/>`;
+ s+=`<circle cx="${B[0]}" cy="${B[1]}" r="${2*S}" fill="none" stroke="var(--border-strong)" stroke-width="0.7" stroke-dasharray="4 4"/>`;
+ s+=`<rect x="${B[0]-14}" y="${B[1]}" width="28" height="7" rx="2" fill="none" stroke="${css('gray')}"/>`;
+ // ghost arms for iterations (elbow-angle sequence, shoulder re-aimed each time)
+ const shown=its.slice(0,6);
+ shown.forEach((tt,i)=>{
+  let tf=((tt%(2*Math.PI))+2*Math.PI)%(2*Math.PI);if(tf>Math.PI)tf=2*Math.PI-tf;
+  const qq2=-tf,qq1=Math.atan2(target[1],target[0])-Math.atan2(Math.sin(qq2),1+Math.cos(qq2));
+  const [e,h]=fk(qq1,qq2),E=Wp(e),Hh=Wp(h);
+  const last=i===shown.length-1&&!fail&&reachable;
+  const op=last?1:0.18+i*0.1;
+  s+=`<path d="M${B[0]} ${B[1]}L${E[0]} ${E[1]}L${Hh[0]} ${Hh[1]}" stroke="${last?'var(--text-primary)':css('gray')}" stroke-width="${last?4.5:2.5}" fill="none" stroke-linecap="round" stroke-linejoin="round" opacity="${op}"/>`;
+  if(last)s+=`<circle cx="${E[0]}" cy="${E[1]}" r="4" fill="none" stroke="var(--text-primary)" stroke-width="1.5"/>`});
+ // target
+ const Tg=Wp(target);
+ s+=`<circle cx="${Tg[0]}" cy="${Tg[1]}" r="8" fill="${css('amber')}" style="cursor:grab"/>`;
+ s+=`<text x="${Tg[0]+12}" y="${Tg[1]-10}" style="font-size:12px;font-weight:600;fill:${css('amber')}">target (drag)</text>`;
+ // iteration table (right side)
+ let rows=its.slice(0,7).map((tt,i)=>`<tr><td>${i}</td><td>${fm(tt)}</td><td>${fm(f(tt,d2))}</td></tr>`).join('');
+ s+=`<foreignObject x="560" y="24" width="290" height="360"><div xmlns="http://www.w3.org/1999/xhtml" style="font:12.5px -apple-system,Segoe UI,sans-serif;color:var(--text-primary)">
+  <div style="margin-bottom:4px">solve f(θ) = 2 + 2cos θ − d² = 0, d = ${d.toFixed(3)}</div>
+  <table style="border-collapse:collapse"><tr><th style="text-align:right;padding:2px 10px">k</th><th style="text-align:right;padding:2px 10px">θₖ</th><th style="text-align:right;padding:2px 10px">f(θₖ)</th></tr>${rows}</table>
+  <div style="margin-top:6px;${fail?'color:var(--text-danger)':''}">${
+   !reachable?'<b style="color:var(--text-danger)">target out of reach (d > 2): f has no root — Newton chases a zero that doesn’t exist</b>':
+   fail?('<b>'+fail+'</b>'):
+   `<b style="color:var(--text-success)">converged: θ = ${fm(t)} rad in ${its.length-1} steps ✓</b><br>check: |hand| = ${Math.sqrt(2+2*Math.cos(t)).toFixed(4)} = d ✓`}</div></div></foreignObject>`;
+ sv.innerHTML=s;
+ document.getElementById('cap').textContent= seed>1?
+  'Inverse kinematics as root finding: the elbow angle θ must satisfy 2 + 2cos θ = d². A bent seed sits where f′ is healthy, so Newton lands in 3–4 steps. Ghost arms show the iterates; drag the target and watch it re-solve.':
+  'Seeded almost straight: f′(θ) = −2 sin θ ≈ 0 there, so the first Newton step divides by almost zero and hurls the elbow 7+ radians — through a full revolution — before settling on an equivalent angle. A real arm can’t teleport like that. This is the 1-D shadow of a singular Jacobian: the straight arm is a singularity, exactly like Lecture 2’s null-space story.'}
+document.querySelectorAll('[data-s]').forEach(b=>b.onclick=()=>{seed=+b.dataset.s;
+ document.querySelectorAll('[data-s]').forEach(x=>x.classList.toggle('on',x===b));draw()});
+function pt(e){const r=sv.getBoundingClientRect();return[(e.clientX-r.left)*860/r.width,(e.clientY-r.top)*400/r.height]}
+sv.addEventListener('pointerdown',e=>{const[a,b]=pt(e);const Tg=Wp(target);
+ if(Math.hypot(a-Tg[0],b-Tg[1])<40){drag=true;sv.setPointerCapture(e.pointerId)}});
+sv.addEventListener('pointermove',e=>{if(!drag)return;const[a,b]=pt(e);
+ target=[(a-B[0])/S,(B[1]-b)/S];
+ const d=Math.hypot(target[0],target[1]);
+ if(d>2.4){target=[target[0]*2.4/d,target[1]*2.4/d]}
+ draw()});
+sv.addEventListener('pointerup',()=>drag=false);
+draw();
+const post=()=>parent.postMessage({demoHeight:document.body.scrollHeight+8},'*');
+addEventListener('load',post);new ResizeObserver(post).observe(document.body);
+</script></body></html>

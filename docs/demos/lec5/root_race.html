@@ -1,0 +1,92 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Root-Finding Race</title>
+<style>
+:root{--text-primary:#1f2937;--text-secondary:#4b5563;--text-muted:#9ca3af;--text-accent:#1d4ed8;--bg-accent:#dbeafe;--border:#e5e7eb;--border-strong:#cbd5e1;--border-accent:#93c5fd;--radius:8px;--bg:#fff;--blue:#2563eb;--purple:#7c3aed;--green:#16a34a;--amber:#BA7517;--gray:#9ca3af;--red:#dc2626}
+@media (prefers-color-scheme:dark){:root{--text-primary:#e5e7eb;--text-secondary:#cbd5e1;--text-muted:#6b7280;--text-accent:#93c5fd;--bg-accent:#1e3a8a;--border:#2f2f2f;--border-strong:#4b5563;--border-accent:#3b82f6;--bg:#191919;--blue:#60a5fa;--purple:#a78bfa;--green:#4ade80;--amber:#fbbf24;--gray:#6b7280;--red:#f87171}}
+body{margin:0;padding:12px 16px;background:var(--bg);color:var(--text-primary);font:14px/1.5 -apple-system,Segoe UI,Helvetica,Arial,sans-serif;max-width:900px}
+.row{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:6px}
+.row button{font:inherit;font-size:13px;padding:4px 10px;border:0.5px solid var(--border-strong);border-radius:var(--radius);background:transparent;color:var(--text-primary);cursor:pointer}
+.row button.on{background:var(--bg-accent);color:var(--text-accent);border-color:var(--border-accent)}
+svg{display:block}
+#cap{font-size:13px;color:var(--text-secondary);margin-top:4px;line-height:1.55}
+</style></head><body>
+<div class="row">
+ <button data-p="0" class="on">smooth: x³−2x−5</button>
+ <button data-p="1">curved: eˣ−1</button>
+ <button data-p="2">flat: (x−1)⁵</button>
+ <span style="width:12px"></span>
+ <button id="bStep">Step</button><button id="bPlay">Play</button><button id="bReset">Reset</button>
+ <b id="it" style="font-size:13px"></b></div>
+<svg id="sv" width="100%" viewBox="0 0 860 420"></svg>
+<div id="cap"></div>
+<script>
+const PRESETS=[
+ {f:x=>x*x*x-2*x-5,a:1,b:3,root:2.0945514815423283,name:'x³ − 2x − 5 on [1, 3]',
+  cap:'A well-behaved cubic. Bisection (gray) grinds: one bit per step, forever. Regula falsi (purple) keeps the bracket but one end barely moves. Secant (blue) stops shrinking a bracket and just follows the slope — superlinear, done in ~6 steps.'},
+ {f:x=>Math.exp(x)-1,a:-4,b:1,root:0,name:'eˣ − 1 on [−4, 1]',
+  cap:'Strong curvature: the chord badly misrepresents the left side. Regula falsi\'s left endpoint gets stuck at −4 — it converges one-sided and slowly. Secant is free to drop the sign-change guarantee and races ahead. This is the trade: speed vs a guaranteed bracket.'},
+ {f:x=>Math.pow(x-1,5),a:0,b:2.6,root:1,name:'(x − 1)⁵ on [0, 2.6]',
+  cap:'A flat quintic: f′ ≈ 0 near the root, so slope-following takes tiny timid steps — secant and regula falsi crawl. Bisection doesn\'t care about slopes at all and wins. Flat roots (multiple roots) are the bracketing methods\' revenge.'}];
+let pi=0,iter=0,anim=null,state=null;
+const sv=document.getElementById('sv');
+const css=v=>`var(--${v})`;
+const f6=n=>Math.abs(n)<1e-4?n.toExponential(1).replace('-','−'):(''+ (Math.round(n*1e4)/1e4)).replace('-','−');
+function reset(n=3){const P=PRESETS[pi];iter=0;
+ state={bi:{a:P.a,b:P.b,hist:[]},rf:{a:P.a,b:P.b,hist:[]},se:{x0:P.a,x1:P.b,hist:[]}};
+ for(let i=0;i<n;i++)step();
+ draw()}
+function step(){const P=PRESETS[pi],f=P.f;iter++;
+ // bisection
+ let s=state.bi;const c=(s.a+s.b)/2;if(f(s.a)*f(c)<0)s.b=c;else s.a=c;s.hist.push(Math.abs(c-P.root));s.c=c;
+ // regula falsi
+ s=state.rf;if(f(s.b)!==f(s.a)){const c2=s.b-f(s.b)*(s.b-s.a)/(f(s.b)-f(s.a));
+  if(f(s.a)*f(c2)<0)s.b=c2;else s.a=c2;s.hist.push(Math.abs(c2-P.root));s.c=c2}else s.hist.push(s.hist[s.hist.length-1]||1);
+ // secant
+ s=state.se;if(f(s.x1)!==f(s.x0)){const x2=s.x1-f(s.x1)*(s.x1-s.x0)/(f(s.x1)-f(s.x0));
+  s.x0=s.x1;s.x1=x2;s.hist.push(Math.abs(x2-P.root))}else s.hist.push(s.hist[s.hist.length-1]||1e-16);
+ draw()}
+function panel(x0,w,title,col,pts,extra){const P=PRESETS[pi],f=P.f,T=36,H=170;
+ const pad=(P.b-P.a)*0.08,xa=P.a-pad,xb=P.b+pad;
+ let lo=1e9,hi=-1e9;for(let i=0;i<=60;i++){const v=f(xa+(xb-xa)*i/60);lo=Math.min(lo,v);hi=Math.max(hi,v)}
+ const m=(hi-lo)*0.12;lo-=m;hi+=m;
+ const X=x=>x0+(x-xa)/(xb-xa)*w,Y=y=>T+(hi-y)/(hi-lo)*H;
+ let s=`<text x="${x0+w/2}" y="${T-12}" text-anchor="middle" style="font-size:13px;font-weight:600;fill:${col}">${title}</text>`;
+ s+=`<rect x="${x0}" y="${T}" width="${w}" height="${H}" fill="none" stroke="var(--border)" stroke-width="0.5"/>`;
+ s+=`<path d="M${x0} ${Y(0)}H${x0+w}" stroke="var(--text-muted)" stroke-width="0.7"/>`;
+ let d='';for(let i=0;i<=120;i++){const x=xa+(xb-xa)*i/120,y=Math.max(lo,Math.min(hi,f(x)));d+=(i?'L':'M')+X(x).toFixed(1)+' '+Y(y).toFixed(1)}
+ s+=`<path d="${d}" stroke="var(--text-primary)" stroke-width="1.8" fill="none"/>`;
+ if(extra)s+=extra(X,Y);
+ pts.forEach(([x,lab])=>{s+=`<circle cx="${X(x)}" cy="${Y(f(x))}" r="4.5" fill="${col}"/><path d="M${X(x)} ${Y(f(x))}V${Y(0)}" stroke="${col}" stroke-width="1" stroke-dasharray="3 3"/><text x="${X(x)}" y="${Y(0)+14}" text-anchor="middle" style="font-size:11px;fill:${col}">${lab}</text>`});
+ s+=`<circle cx="${X(P.root)}" cy="${Y(0)}" r="3.5" fill="none" stroke="${css('red')}" stroke-width="1.5"/>`;
+ return s}
+function draw(){const P=PRESETS[pi];
+ document.getElementById('it').textContent='iteration '+iter;
+ let s='';
+ const bi=state.bi,rf=state.rf,se=state.se;
+ const shade=(a,b,col)=>(X,Y)=>`<rect x="${X(a)}" y="36" width="${Math.max(0,X(b)-X(a))}" height="170" fill="${col}" opacity="0.1"/>`;
+ s+=panel(14,260,'bisection',css('gray'),[[bi.a,'a'],[bi.b,'b']],shade(bi.a,bi.b,css('gray')));
+ s+=panel(300,260,'regula falsi',css('purple'),[[rf.a,'a'],[rf.b,'b']],shade(rf.a,rf.b,css('purple')));
+ s+=panel(586,260,'secant',css('blue'),[[se.x0,'x₀'],[se.x1,'x₁']],null);
+ // error chart
+ const T=262,H=130,L=56,W=790,mi=-16,ma=0.5,K=14;
+ const X=k=>L+k/K*W,Y=e=>T+(ma-e)/(ma-mi)*H;
+ s+=`<rect x="${L}" y="${T}" width="${W}" height="${H}" fill="none" stroke="var(--border)" stroke-width="0.5"/>`;
+ for(const g of [0,-4,-8,-12,-16])s+=`<path d="M${L} ${Y(g)}H${L+W}" stroke="var(--border)" stroke-width="0.5"/><text x="${L-6}" y="${Y(g)+4}" text-anchor="end" style="font-size:10.5px;fill:var(--text-muted)">1e${g}</text>`;
+ s+=`<text x="${L+W/2}" y="${T+H+26}" text-anchor="middle" style="font-size:11.5px;fill:var(--text-muted)">iteration — log scale: straight line = linear convergence, diving curve = superlinear</text>`;
+ const line=(hist,col)=>{if(!hist.length)return'';let d='';hist.slice(0,K).forEach((e,i)=>{const y=Y(Math.max(mi,Math.log10(Math.max(e,1e-17))));d+=(i?'L':'M')+X(i+1).toFixed(1)+' '+y.toFixed(1)});
+  return `<path d="${d}" stroke="${col}" stroke-width="2" fill="none"/>`};
+ s+=line(bi.hist,css('gray'))+line(rf.hist,css('purple'))+line(se.hist,css('blue'));
+ sv.innerHTML=s;
+ document.getElementById('cap').textContent=PRESETS[pi].name+' — '+PRESETS[pi].cap}
+document.querySelectorAll('[data-p]').forEach(b=>b.onclick=()=>{pi=+b.dataset.p;
+ document.querySelectorAll('[data-p]').forEach(x=>x.classList.toggle('on',x===b));
+ if(anim){clearInterval(anim);anim=null;bPlay.textContent='Play'}reset()});
+document.getElementById('bStep').onclick=()=>{if(iter<14)step()};
+document.getElementById('bReset').onclick=()=>{if(anim){clearInterval(anim);anim=null;bPlay.textContent='Play'}reset()};
+document.getElementById('bPlay').onclick=()=>{if(anim){clearInterval(anim);anim=null;bPlay.textContent='Play';return}
+ bPlay.textContent='Pause';anim=setInterval(()=>{if(iter>=14){clearInterval(anim);anim=null;bPlay.textContent='Play'}else step()},700)};
+reset();
+const post=()=>parent.postMessage({demoHeight:document.body.scrollHeight+8},'*');
+addEventListener('load',post);new ResizeObserver(post).observe(document.body);
+</script></body></html>

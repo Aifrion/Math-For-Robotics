@@ -1,0 +1,264 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Lecture 5 — Root Finding | Math for Robotics</title>
+<link rel="stylesheet" href="assets/site.css">
+<link rel="stylesheet" href="vendor/katex/katex.min.css">
+<script defer src="vendor/katex/katex.min.js"></script>
+<script defer src="vendor/katex/auto-render.min.js"></script>
+<script defer src="assets/site.js"></script>
+</head><body>
+<div class="layout">
+<main><div class="content">
+
+<h1>Lecture 5: Root Finding</h1>
+
+<div class="callout summary"><span class="tag">The one-sentence version:</span>
+"solve f(x) = 0" is the universal disguise — inverse kinematics, collision times, optimality
+conditions all wear it — and the methods trade <b>guaranteed-but-slow</b> (keep a bracket, halve it)
+against <b>fast-but-local</b> (follow a slope and pray).
+<br><span class="small muted">CSE 276C, Lecture 5 · Prof. Henrik Christensen · Numerical Recipes ch. 9.
+All numbers verified in <code>scripts/lec5/verify.py</code>.</span></div>
+
+<div class="toc"><b>Contents</b><ol>
+<li><a href="#why">Why robots solve f(x) = 0</a></li>
+<li><a href="#bracket">Bracketing</a></li>
+<li><a href="#bisect">Bisection</a></li>
+<li><a href="#secant">Secant &amp; regula falsi</a></li>
+<li><a href="#brent">Brent's method</a></li>
+<li><a href="#newton">Newton-Raphson</a></li>
+<li><a href="#ik">Robot interlude: IK is root finding</a></li>
+<li><a href="#poly">Polynomial roots: closed forms</a></li>
+<li><a href="#count">Counting roots: Descartes &amp; Sturm</a></li>
+<li><a href="#deflate">Deflation, Horner, Müller</a></li>
+<li><a href="#summary">Summary</a></li>
+</ol></div>
+
+<h2 id="big">The big picture</h2>
+<p>Lectures 3–4 built function approximations. This lecture inverts the question: given f, find
+where it crosses zero. The whole lecture is one ladder — each rung uses more knowledge of f to go faster,
+and pays for it with less safety:</p>
+<p style="text-align:center" class="small"><b>sign change</b> (bracket) → <b>halve it</b> (bisection) →
+<b>use 2 values</b> (secant) → <b>use 3</b> (Brent) → <b>use the derivative</b> (Newton)</p>
+
+<table>
+<tr><th>robotics problem</th><th>what you have</th><th>what you need</th><th>method</th></tr>
+<tr><td>inverse kinematics</td><td>hand-position equations</td><td>joint angles</td><td>multivariate Newton</td></tr>
+<tr><td>collision detection</td><td>distance(t) between robot and obstacle</td><td>time where distance = 0</td><td>bracketing + Brent</td></tr>
+<tr><td>optimal control switch times</td><td>a condition that flips sign</td><td>the switching instant</td><td>root finding on the condition</td></tr>
+<tr><td>camera / sensor calibration</td><td>polynomial constraints</td><td>all solutions</td><td>polynomial roots + deflation</td></tr>
+</table>
+
+<h2 id="why">1 · Why robots solve f(x) = 0</h2>
+<p>Two families, per the slides: general <b>non-linear systems</b> (searched numerically) and
+<b>polynomial systems</b> (which can be factorized, counted, and sometimes solved exactly).
+The next six sections handle the first family; sections 8–10 the second.</p>
+
+<h2 id="bracket">2 · Bracketing: know where to look</h2>
+<p>Everything safe starts from an interval where the function changes sign:</p>
+$$f(a)\,f(b) < 0$$
+<p>A continuous function that is negative at one end and positive at the other must cross zero
+in between — that interval is a <b>bracket</b>, and it's a certificate: the root cannot escape.</p>
+<div class="callout gotcha"><span class="tag">⚠️ Gotcha:</span> no sign change ≠ no root.
+\(f(x) = (x-1)^2\) touches zero without crossing, and a pair of close roots can hide inside one
+sample step. Bracketing finds <em>odd</em> crossings only — which is why the slides later bring in
+Sturm's theorem for polynomials, where you can count <em>exactly</em>.</div>
+
+<h2 id="bisect">3 · Bisection: the method that cannot fail</h2>
+<p>Evaluate the midpoint, keep whichever half still has the sign change:</p>
+$$c = \frac{a+b}{2}, \qquad f(a)f(c) < 0\;?\;\text{keep } [a,c] : \text{keep } [c,b]$$
+<table>
+<tr><th>symbol</th><th>meaning</th></tr>
+<tr><td>\(s_n\)</td><td>bracket width after n steps: \(s_{n+1} = s_n/2\), guaranteed</td></tr>
+<tr><td>\(n = \log_2(s_0/s)\)</td><td>evaluations needed to shrink \(s_0\) down to \(s\)</td></tr>
+<tr><td>\(s_{n+1} = \text{const}\cdot s_n^m\)</td><td>convergence order: \(m=1\) is <b>linear</b>, \(m&gt;1\) <b>superlinear</b></td></tr>
+</table>
+<details><summary>Worked example: how many steps is "10 digits"? (click to open)</summary><div class="body">
+<p>Bracket of width 1, target \(10^{-10}\): \(n = \log_2(1/10^{-10}) = \log_2 10^{10} \approx 33.2\),
+so 34 evaluations — <em>regardless of the function</em>. One bit of accuracy per evaluation, rain or shine.
+On the same problem Newton needs 4 (see Fig 1).</p></div></details>
+
+<h2 id="secant">4 · Secant &amp; regula falsi: use the values, not just the signs</h2>
+<p>Bisection throws away the <em>sizes</em> of f(a), f(b) and keeps only their signs. The secant
+method fits the line through both points and jumps to its zero:</p>
+$$\Delta = \frac{f(a)-f(b)}{a-b}, \qquad c = -\frac{f(a)}{\Delta}, \qquad d = a + c$$
+<table>
+<tr><th>symbol</th><th>meaning</th></tr>
+<tr><td>\(\Delta\)</td><td>slope of the chord through the two latest points — a free derivative estimate</td></tr>
+<tr><td>\(d = a + c\)</td><td>where that chord crosses zero: the next guess</td></tr>
+<tr><td>order 1.618</td><td>\(\lim |s_{k+1}| = \text{const}\,|s_k|^{1.618}\) — the golden ratio, from the two-term error recursion</td></tr>
+</table>
+<p>Two siblings, one difference:</p>
+<ul>
+<li><b>Secant</b> always keeps the two <em>newest</em> points → fastest, but can lose the sign change and wander.</li>
+<li><b>Regula falsi</b> always keeps two points of <em>opposite sign</em> → never loses the root, but on curvy functions one endpoint gets stuck and it crawls.</li>
+</ul>
+<p class="small muted">When does secant stumble? The slides' answer: when the 2nd derivative changes a lot near the root — the chord then misrepresents the function badly.</p>
+
+<p class="try">🕹️ <b>Try it:</b> race all three on the same bracket. Step through; the log-error chart tells convergence orders apart at a glance. The <b>flat</b> preset is bisection's revenge.</p>
+<div class="demo-wrap"><iframe class="demo" src="demos/lec5/root_race.html" height="560" title="Root finding race"></iframe></div>
+
+<h2 id="brent">5 · Brent's method: the one you actually call</h2>
+<p>Three points define a sideways parabola (inverse quadratic interpolation). Setting y = 0 in the
+Lagrange form gives the update</p>
+$$x = b + \frac{P}{Q}, \qquad
+P = S\big(T(R-T)(c-b) - (1-R)(b-a)\big), \qquad Q = (T-1)(R-1)(S-1)$$
+<table>
+<tr><th>symbol</th><th>meaning</th></tr>
+<tr><td>\(R = f(b)/f(c),\; S = f(b)/f(a),\; T = f(a)/f(c)\)</td><td>ratios of the three latest values</td></tr>
+<tr><td>\(b\)</td><td>current best estimate; \(P/Q\) is a (hopefully small) correction</td></tr>
+</table>
+<p><b>The actual idea of Brent</b> is the safety logic: take the fancy \(P/Q\) step only when it lands
+inside the bracket and shrinks fast enough; otherwise fall back to a bisection step. Superlinear speed
+with bisection's guarantee — the slides call it "generally the recommended method", and it's what
+<code>scipy.optimize.brentq</code> does.</p>
+
+<figure><img src="figures/lec5/01_convergence_race.svg" alt="Convergence race" width="760">
+<figcaption>Fig 1 — measured error per iteration on x³ − 2x − 5. Linear = straight line, superlinear = dive.</figcaption></figure>
+
+<h2 id="newton">6 · Newton-Raphson: use the derivative itself</h2>
+<p>Taylor-expand around the current guess and keep only the linear term:</p>
+$$f(x+\delta) \approx f(x) + f'(x)\,\delta = 0 \;\Rightarrow\; \delta = -\frac{f(x)}{f'(x)}
+\;\Rightarrow\; x_{n+1} = x_n - \frac{f(x_n)}{f'(x_n)}$$
+<p>Geometrically: slide down the tangent to where it hits zero, repeat. Convergence is
+<b>quadratic</b> (order 2): near the root, the number of correct digits doubles each step.</p>
+
+<p class="try">🕹️ <b>Try it:</b> drag x₀ and watch the tangent cascade. The <b>cycle</b> preset is the slides' warning about seeds made flesh: 0 → 1 → 0 → 1 forever.</p>
+<div class="demo-wrap"><iframe class="demo" src="demos/lec5/newton_explorer.html" height="520" title="Newton explorer"></iframe></div>
+
+<div class="callout gotcha"><span class="tag">⚠️ Numerical derivatives are a trap:</span>
+approximating \(f'(x) \approx (f(x+dx)-f(x))/dx\) fails both ways — too big a \(dx\) and the
+linearity assumption is poor; too small and you subtract nearly equal numbers and divide by
+almost nothing (catastrophic cancellation). If you don't have a real derivative, prefer secant/Brent,
+which never pretend to have one.</div>
+
+<h3>Many unknowns: the multivariate case</h3>
+<p>For a system \(f_i(\vec x) = 0\), the first-order term becomes the <b>Jacobian</b>
+\(J_{ij} = \partial f_i / \partial x_j\) — the same matrix as Lecture 2 — and each Newton step is a linear solve:</p>
+$$J\,\delta\vec{x} = -\vec{f} \;\;(\text{solve with LU}), \qquad \vec{x}_{new} = \vec{x}_{old} + \lambda\,\delta\vec{x},\;\; \lambda \in [0,1]$$
+<p class="small muted">λ &lt; 1 is damping: take a fraction of the step when the full one overshoots. Note the full circle: root finding per step costs one Lecture-2 linear solve.</p>
+
+<h2 id="ik">7 · Robot interlude: inverse kinematics <em>is</em> root finding</h2>
+<p>A 2-link arm (links = 1) reaches distance d when the elbow angle satisfies
+\(f(\theta) = 2 + 2\cos\theta - d^2 = 0\). Solve it with Newton and you've done IK:</p>
+
+<p class="try">🕹️ <b>Try it:</b> drag the target. Then switch to the almost-straight seed and watch f′ ≈ 0 hurl the elbow through a full revolution — the 1-D version of a singular Jacobian.</p>
+<div class="demo-wrap"><iframe class="demo" src="demos/lec5/ik_newton_arm.html" height="520" title="IK by Newton"></iframe></div>
+
+<details><summary>Worked example: reach d = 1.3 (click to open)</summary><div class="body">
+<p>\(f(\theta) = 2 + 2\cos\theta - 1.69\), \(f'(\theta) = -2\sin\theta\). From \(\theta_0 = 2.5\):
+Newton lands on \(\theta = 1.72642\) in 4 steps. Closed-form check:
+\(\arccos\!\big((d^2-2)/2\big) = \arccos(-0.155) = 1.72642\) ✓.</p></div></details>
+
+<h2 id="poly">8 · Polynomial roots: when there's a formula</h2>
+<p>Degree ≤ 4 has closed forms. Quadratic you know. The cubic
+\(x^3 + px^2 + qx + r = 0\) is first <b>depressed</b> (substitute \(x = y - p/3\), killing the square term):</p>
+$$y^3 + ay + b = 0, \qquad a = \tfrac{1}{3}(3q - p^2), \quad b = \tfrac{1}{27}(2p^3 - 9pq + 27r)$$
+<p>then Cardano's formula gives \(y_1 = A + B\) with
+\(A,B = \sqrt[3]{-\tfrac{b}{2} \pm \sqrt{\tfrac{b^2}{4} + \tfrac{a^3}{27}}}\), and the discriminant
+\(\Delta = \tfrac{b^2}{4} + \tfrac{a^3}{27}\) sorts the three cases:</p>
+
+<figure><img src="figures/lec5/03_cubic_cases.svg" alt="Cubic discriminant cases" width="860">
+<figcaption>Fig 2 — Δ &gt; 0: one real root. Δ = 0: a double root (the hump touches zero). Δ &lt; 0: three distinct real roots.</figcaption></figure>
+
+<p>Quartics get the same treatment (substitute \(x = y - p/4\), then factor via a <b>resolvent cubic</b>).
+Degree ≥ 5: no general formula exists (Abel–Ruffini) — you must go numerical, which is the rest of this lecture.</p>
+<div class="callout insight"><span class="tag">💡 Practical note:</span> the closed forms are
+exact on paper but numerically brittle (cancellation inside those cube roots). Libraries find
+polynomial roots as eigenvalues of the companion matrix instead — that's literally what
+<code>numpy.roots</code> does. Know the formulas exist; don't build on them.</div>
+
+<h2 id="count">9 · Counting roots before finding them</h2>
+<h3>Descartes' rule of signs</h3>
+<p>Count sign changes in the coefficient list of p(x): the number of <em>positive</em> real roots equals
+that count or less by an even number. Apply to p(−x) for the negative ones.</p>
+<details><summary>Worked example: the slides' p(x) = x⁵ + 4x⁴ − 3x² + x − 6 (click to open)</summary><div class="body">
+<p>Signs of (1, 4, −3, 1, −6): + + − + − → <b>3 changes</b> → 3 or 1 positive roots.<br>
+p(−x) has coefficients (−1, 4, 0, −3, −1, −6): − + − − − → <b>2 changes</b> → 2 or 0 negative roots.<br>
+Verified truth: roots ≈ 1.143, −3.735, −1.579 and one complex pair → exactly 1 positive, 2 negative ✓
+(both counts dropped by 2 — the complex pair ate them).</p></div></details>
+
+<h3>Sturm's theorem: an exact count on any interval</h3>
+<p>Build the <b>Sturm sequence</b>: \(f_0 = p\), \(f_1 = p'\), then each next term is <em>minus the
+remainder</em> of dividing the previous two: \(f_{k-2} = q_k f_{k-1} - f_k\). Let V(x) = number of sign
+changes in the sequence \((f_0(x), f_1(x), \dots)\). Then:</p>
+$$\#\{\text{distinct real roots in } (a, b]\} = V(a) - V(b)$$
+<details><summary>Worked example: the slides' x⁵ + 5x⁴ − 20x² − 10x + 2, fully verified (click to open)</summary><div class="body">
+<p>The sequence (normalized to leading coefficient 1, as the slides do):
+\(f_1 = x^4 + 4x^3 - 8x - 2\), \(f_2 = x^3 + 3x^2 - 1\), \(f_3 = x^2 + \tfrac{7}{3}x + \tfrac13\)
+(the slides' 3x² + 7x + 1), \(f_4 = x + \tfrac{11}{17}\) (the slides' 17x + 11), \(f_5 = 1\).</p>
+<table>
+<tr><th>x</th><td>−∞</td><td>−10</td><td>−5</td><td>−4</td><td>−3</td><td>−2</td><td>−1</td><td>0</td><td>1</td><td>2</td><td>5</td><td>∞</td></tr>
+<tr><th>V(x)</th><td>5</td><td>5</td><td>5</td><td>5</td><td>4</td><td>3</td><td>3</td><td>2</td><td>1</td><td>0</td><td>0</td><td>0</td></tr>
+</table>
+<p>Each drop isolates a root: (−4,−3), (−3,−2), (−1,0), (0,1), (1,2). True roots:
+−3.816, −2.513, −0.719, 0.153, 1.894 — one in each ✓. Five guaranteed brackets, ready for Brent.</p></div></details>
+
+<figure><img src="figures/lec5/02_sturm_line.svg" alt="Sturm number line" width="820">
+<figcaption>Fig 3 — V(x) along the line: every unit drop brackets exactly one real root.</figcaption></figure>
+
+<h2 id="deflate">10 · Deflation, Horner, and Müller</h2>
+<h3>Horner's scheme: evaluate and divide at once</h3>
+<p>Write \(p(x) = x^3 - 2x^2 - 4x + 3\) as \(((x - 2)x - 4)x + 3\): n multiplies instead of
+n(n+1)/2, and the intermediate values are exactly the coefficients of the quotient \(q(x) = p(x)/(x-r)\).</p>
+<h3>Deflation: found one root? Divide it out</h3>
+$$p(x) = (x - r)\,q(x) \qquad\text{— find a root of } q \text{ next; it's one degree smaller}$$
+<details><summary>Worked example: deflating x³ − 2x² − 4x + 3 (click to open)</summary><div class="body">
+<p>Newton (with Horner supplying p and p′) from \(x_0 = 4\) converges to \(r = 3\).
+Synthetic division by (x − 3): coefficients (1, −2, −4, 3) → quotient (1, 1, −1), i.e.
+\(q(x) = x^2 + x - 1\). Its roots: \(\tfrac{-1 \pm \sqrt 5}{2}\) = −1.618 and 0.618 —
+the golden ratio and its conjugate. All three roots for the price of one search plus a quadratic formula.</p></div></details>
+<div class="callout gotcha"><span class="tag">⚠️ Gotcha:</span> deflate with a sloppy root and the
+quotient's coefficients inherit the error — later roots drift. Standard hygiene: find roots on the
+deflated polynomial, then <b>polish</b> each one with a Newton step or two on the <em>original</em> p.
+Double roots are the hard case: there p′(r) = 0, Newton slows to linear, and deflation must remove the factor twice.</div>
+
+<h3>Müller's method: the quadratic secant</h3>
+<p>Newton is local and needs f′. Müller fits a <b>parabola through the last three iterates</b>
+(a divided-difference form of Lecture 3's quadratic) and jumps to its nearest zero:</p>
+$$p(x) = f(x_k) + b\,(x - x_k) + a\,(x - x_k)^2 \;\Rightarrow\;
+x_{k+1} = x_k - \frac{2c}{b \pm \sqrt{b^2 - 4ac}}\;\;(\text{sign that makes the denominator biggest})$$
+<p class="small muted">Because the square root may go negative, Müller steps can be <b>complex</b> —
+which is a feature: it finds complex roots of polynomials with real starting points. On the running
+cubic it converges in ~4 steps from (1, 2, 3). Order ≈ 1.84: between secant and Newton, no derivative needed.</p>
+
+<h2 id="summary">11 · Summary</h2>
+<ul>
+<li>Bracket first. A sign change is a certificate no fast method should give up without reason.</li>
+<li>Convergence order is the whole game: bisection adds a <em>bit</em> per step, secant multiplies digits by 1.6, Newton doubles them.</li>
+<li>Brent = secant-family speed inside a bisection seatbelt. Default to it.</li>
+<li>Newton generalizes to systems — each step is a Lecture-2 LU solve of \(J\delta x = -f\) — but it's local: seeds, flat spots, and singular Jacobians all bite.</li>
+<li>Polynomials are special: exact formulas to degree 4, exact counting (Descartes, Sturm), and deflation to peel roots off one by one.</li>
+</ul>
+<table>
+<tr><th>method</th><th>one-line idea</th><th>order</th><th>needs</th><th>use it when</th></tr>
+<tr><td>bisection</td><td>halve the sign-change interval</td><td>1 (linear)</td><td>bracket</td><td>guarantee matters, f is nasty</td></tr>
+<tr><td>regula falsi</td><td>chord zero, keep the bracket</td><td>superlinear-ish</td><td>bracket</td><td>rarely alone — can stall one-sided</td></tr>
+<tr><td>secant</td><td>chord zero, keep newest two</td><td>1.618</td><td>2 starts</td><td>smooth f, no derivative</td></tr>
+<tr><td>Brent</td><td>inverse quadratic + bisection fallback</td><td>~1.8, safe</td><td>bracket</td><td><b>the default</b></td></tr>
+<tr><td>Newton-Raphson</td><td>ride the tangent</td><td>2</td><td>f′, good seed</td><td>derivative cheap, seed close (IK loops)</td></tr>
+<tr><td>Müller</td><td>parabola through last 3</td><td>1.84</td><td>3 starts</td><td>polynomials, complex roots</td></tr>
+</table>
+
+<details><summary>⚠️ Typos in the slides to watch out for</summary><div class="body"><ul>
+<li>Slide 33: "<b>Strum's</b> theorem" → <b>Sturm's</b>; in the theorem statement, "f<sub>k1</sub>(a)" → f<sub>k−1</sub>(a).</li>
+<li>Slide 15 title: "Newton <b>Rapson's</b>" → Raphson's.</li>
+<li>Slide 9: "Computer intersection point" → Compute; the figure's green line is the secant chord.</li>
+<li>Slide 14: "(f(b)−f(c))(f(b)−f(A))" → the last factor should be f(a) (lowercase, same quantity).</li>
+<li>Slide 30: x₄ = −p/4 − ½(R <b>−</b> D) → should be −p/4 − ½(R − <b>E</b>) by symmetry with x₃; and the D, E formulas contain Q terms that are z₁-dependent (Numerical Recipes §5.6 has the clean version).</li>
+</ul></div></details>
+
+<details><summary>🧠 Self-check questions</summary><div class="body">
+<details><summary>1 · Your bracket is width 1 and you need 10⁻⁶. How many bisection steps? How many Newton steps (roughly)?</summary><div class="body">Bisection: log₂10⁶ ≈ 20. Newton near the root: digits double, so from 1 digit ≈ 4–5 steps. That ratio is why controllers running at 1 kHz use Newton, not bisection.</div></details>
+<details><summary>2 · Secant vs regula falsi — same formula, different bookkeeping. What exactly differs and what does each buy?</summary><div class="body">Secant keeps the two newest points (speed 1.618, may lose the sign change); regula falsi keeps an opposite-sign pair (never loses the root, but a convex f pins one endpoint and it crawls). Brent is the honest resolution of this trade.</div></details>
+<details><summary>3 · Why does Newton cycle forever on x³ − 2x + 2 from x₀ = 0?</summary><div class="body">N(0) = 0 − 2/(−2) = 1 and N(1) = 1 − 1/1 = 0: the tangents at 0 and 1 hand you back and forth. The real root (−1.769) is outside the cycle's basin. Nothing is wrong with f — only with the seed.</div></details>
+<details><summary>4 · Descartes says "3 or 1 positive roots". Where can the 2 go?</summary><div class="body">Into a complex-conjugate pair — complex roots of real polynomials come in pairs, which is exactly why the count drops by even numbers.</div></details>
+<details><summary>5 · Sturm gave you V(0) = 2 and V(2) = 0. What do you know, and what do you do next?</summary><div class="body">Exactly 2 distinct real roots in (0, 2] — guaranteed, not "maybe". Next: evaluate V(1) to split them into two brackets, then hand each bracket to Brent.</div></details>
+<details><summary>6 · Why polish roots on the original polynomial after deflation?</summary><div class="body">Each deflation divides by (x − r̂) with a slightly wrong r̂, perturbing every remaining coefficient; errors compound root after root. Polishing on the original p costs one or two Newton steps and removes the accumulated drift.</div></details>
+</div></details>
+
+<div class="prevnext"><span class="muted">← Lecture 4: Function Approximation (soon)</span><a href="lec6.html" id="nextlink">Lecture 6: Optimization →</a></div>
+
+</div></main>
+</div>
+</body></html>

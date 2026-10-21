@@ -7,7 +7,7 @@
     { href: 'lec2.html', title: '2 · Linear Systems', soon: true },
     { href: 'lec3.html', title: '3 · Interpolation', soon: true },
     { href: 'lec4.html', title: '4 · Function Approximation', soon: true },
-    { href: 'lec5.html', title: '5 · Root Finding', soon: true },
+    { href: 'lec5.html', title: '5 · Root Finding' },
     { href: 'lec6.html', title: '6 · Optimization', soon: true },
     { href: 'lec7.html', title: '7 · Integration & ODEs', soon: true },
     { href: 'lec8.html', title: '8 · Subspace Methods', soon: true },
