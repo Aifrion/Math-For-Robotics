@@ -1,0 +1,254 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>HW2 — Trajectory Interpolation | Math for Robotics</title>
+<link rel="stylesheet" href="assets/site.css">
+<link rel="stylesheet" href="vendor/katex/katex.min.css">
+<script defer src="vendor/katex/katex.min.js"></script>
+<script defer src="vendor/katex/auto-render.min.js"></script>
+<script defer src="assets/site.js"></script>
+</head><body>
+<div class="layout">
+<main><div class="content">
+
+<h1>HW2 companion: rebuilding a trajectory by interpolation</h1>
+
+<div class="callout summary"><span class="tag">The one-sentence version:</span>
+interpolation lets a robot pretend it sensed faster than it did — and HW2 makes you measure
+exactly how much that pretending costs, as a function of sample rate and method.
+<br><span class="small muted">Companion to CSE 276C HW2 (due Oct 29) · applies Lecture 3 (interpolation).
+Every number on this page was computed in <code>scripts/hw2/</code>.</span></div>
+
+<div class="toc"><b>Contents</b><ol>
+<li><a href="#data">The data: 96.8 s of driving</a></li>
+<li><a href="#setup">The experiment: downsample, rebuild, compare</a></li>
+<li><a href="#linear">Linear interpolation</a></li>
+<li><a href="#quadratic">Quadratic (piecewise parabola)</a></li>
+<li><a href="#spline">Cubic spline</a></li>
+<li><a href="#results">Results: what wins where (Q1.3 &amp; Q1.4)</a></li>
+<li><a href="#table">Q2: a cos table for a robot with no FPU</a></li>
+<li><a href="#summary">Summary</a></li>
+</ol></div>
+
+<h2 id="big">The big picture</h2>
+<p>Lecture 3 built interpolators on toy data. HW2 hands you a real one: a self-driving cart logged
+its position at 30&nbsp;Hz around Voigt Drive, and you must pretend the sensor was slower
+(10&nbsp;Hz, 1&nbsp;Hz, 0.2&nbsp;Hz), rebuild the missing points, and measure the damage. The chain:</p>
+
+<p style="text-align:center" class="small"><b>30 Hz ground truth</b> → <b>keep every k-th point</b> →
+<b>interpolate back to 30 Hz</b> → <b>error = distance to the truth you hid</b></p>
+
+<table>
+<tr><th>robotics problem</th><th>what you have</th><th>what you need</th><th>method</th></tr>
+<tr><td>trajectory upsampling (Q1)</td><td>sparse waypoints over time</td><td>a 30 Hz trajectory</td><td>linear / quadratic / spline on x(t), y(t)</td></tr>
+<tr><td>fast trig on cheap hardware (Q2)</td><td>memory, integer math</td><td>cos x to 6 digits</td><td>lookup table + local interpolation</td></tr>
+<tr><td>sensor fusion at mismatched rates</td><td>GPS at 1 Hz, IMU at 100 Hz</td><td>values on one clock</td><td>same machinery</td></tr>
+</table>
+
+<div class="callout insight"><span class="tag">💡 The one modeling decision that matters:</span>
+the track is a curve that crosses itself and doubles back, so y is <b>not</b> a function of x.
+Interpolate <b>x(t) and y(t) separately as functions of time</b>, then glue the pair back into a path.
+Every method below is 1-D interpolation applied twice.</div>
+
+<h2 id="data">1 · The data: 96.8 s of driving</h2>
+<p><code>waypoints.csv</code> has 2905 rows (x, y) in metres, one per 1/30&nbsp;s. The route:
+FAH → SME roundabout → trolley stop → FAH, about 1.4&nbsp;km.</p>
+
+<figure><img src="figures/hw2/01_track.svg" alt="Ground truth track" width="540">
+<figcaption>Fig 1 — the ground truth. The out-and-back lanes are a few metres apart.</figcaption></figure>
+
+<details><summary>Worked example: what one row of the file means (click to open)</summary><div class="body">
+<p>Row 2041 is \((-319.43,\,-195.04)\) and row 2071 is \((-316.12,\,-179.96)\).
+They are 30 rows apart, so they are exactly 1 s apart: \(t = 68.0\) s and \(t=69.0\) s.
+The straight-line distance between them is 15.4 m, but the <em>road distance</em> along the 30
+in-between points is 16.2 m — the cart was turning. That bending is exactly what the
+interpolators will fight over.</p>
+<p>Consecutive points are 0.10–0.87 m apart (median 0.48 m → median speed
+\(0.48 \times 30 \approx 14.4\) m/s ≈ 32 mph). The spec's "spatial density varies" is the cart
+speeding up and slowing down.</p></div></details>
+
+<h2 id="setup">2 · The experiment: downsample, rebuild, compare</h2>
+<p>Keep every k-th row to fake a slow sensor, then rebuild all 2905 timestamps:</p>
+
+<table>
+<tr><th>fake rate</th><th>keep every</th><th># samples</th><th>road between samples</th></tr>
+<tr><td>10 Hz</td><td>3rd point</td><td class="num">969</td><td class="num">≈ 1.4 m</td></tr>
+<tr><td>1 Hz</td><td>30th point</td><td class="num">98</td><td class="num">≈ 14 m</td></tr>
+<tr><td>0.2 Hz</td><td>150th point</td><td class="num">21</td><td class="num">≈ 72 m</td></tr>
+</table>
+
+<p>The error at timestamp \(t_i\) is the 2-D distance
+\(e_i = \lVert \hat{p}(t_i) - p(t_i) \rVert\), and the homework's <b>cumulative error</b> is
+\(\sum_i e_i\) over all 2905 timestamps.</p>
+
+<div class="callout fix"><span class="tag">✏️ Decisions to make (and state) in your report:</span>
+<ul class="small" style="margin:6px 0">
+<li>Does your downsample include the final row? (If not, the last stretch needs extrapolation. This page appends the last row to every sample set.)</li>
+<li>Cumulative error summed over all 2905 points (sample points contribute 0), or only over the hidden ones? Both are defensible — say which you used.</li>
+<li>Parameterize by time (what this page does) or by arc length? Time is what the sensors give you.</li>
+</ul></div>
+
+<h2 id="linear">3 · Linear interpolation: connect the dots</h2>
+<p>Between two kept samples, draw a straight segment. For \(t\) between samples at \(t_k\) and \(t_{k+1}\):</p>
+$$\hat{x}(t) = x_k + \frac{t - t_k}{t_{k+1} - t_k}\,(x_{k+1} - x_k)$$
+<table>
+<tr><th>symbol</th><th>meaning</th></tr>
+<tr><td>\(t_k,\,t_{k+1}\)</td><td>timestamps of the two surrounding kept samples</td></tr>
+<tr><td>\(x_k,\,x_{k+1}\)</td><td>their x-coordinates (same formula again for y)</td></tr>
+<tr><td>\(\frac{t-t_k}{t_{k+1}-t_k}\)</td><td>fraction of the way across the gap, 0 → 1</td></tr>
+</table>
+
+<details><summary>Worked example: the worst spot at 1 Hz (click to open)</summary><div class="body">
+<p>At \(t=68.5\) s (exactly halfway between samples) linear gives the midpoint:</p>
+$$\hat{p} = \tfrac12\big[(-319.43, -195.04) + (-316.12, -179.96)\big] = (-317.78,\,-187.50)$$
+<p>Truth is \((-320.09, -188.10)\). Error = <b>2.39 m</b> — about a lane width, and this is the
+worst point on the whole track at 1 Hz. The cart was mid-curve at 15.3 m/s, and a chord
+across a curve always cuts the corner.</p></div></details>
+
+<div class="callout gotcha"><span class="tag">⚠️ Gotcha:</span> linear interpolation is <em>exact</em>
+whenever the true motion is straight at constant velocity. Its error lives entirely where the
+path curves (or the speed changes). That's why the error map is a map of the corners.</div>
+
+<h2 id="quadratic">4 · Quadratic: a parabola through 3 samples</h2>
+<p>Take three consecutive kept samples and pass the unique parabola through them (Lagrange form):</p>
+$$\hat{x}(t) = x_0 \frac{(t-t_1)(t-t_2)}{(t_0-t_1)(t_0-t_2)} + x_1 \frac{(t-t_0)(t-t_2)}{(t_1-t_0)(t_1-t_2)} + x_2 \frac{(t-t_0)(t-t_1)}{(t_2-t_0)(t_2-t_1)}$$
+<p class="small muted">The three fractions are weights that sum to 1; each is 1 at its own sample and 0 at the other two.</p>
+
+<details><summary>Worked example: same spot, same data (click to open)</summary><div class="body">
+<p>Samples at \(t_0,t_1,t_2 = 68, 69, 70\) s; evaluate at \(t=68.5\):
+weights \(= 0.375,\; 0.75,\; -0.125\) (sum = 1 ✓). Note the <em>negative</em> weight — the parabola
+uses the far point to bend away from it.</p>
+$$\hat{p} = 0.375\,p_0 + 0.75\,p_1 - 0.125\,p_2 = (-319.25,\,-187.65)$$
+<p>Error = <b>0.95 m</b> — 2.5× better than linear, because a parabola can bend with the road.</p></div></details>
+
+<div class="callout gotcha"><span class="tag">⚠️ Implementation choice you must make:</span>
+one parabola only covers 3 samples. For a whole trajectory you either slide the window
+(smooth-ish but each point gets re-predicted) or tile non-overlapping triplets
+(what this page does: windows (0,1,2), (2,3,4), …). Tiled windows meet with <b>kinks</b> —
+the reconstruction is continuous but its direction jumps at every even sample. You can see the
+kinks in the demo below. Say in your report which scheme you used.</div>
+
+<h2 id="spline">5 · Cubic spline: one smooth curve through all samples</h2>
+<p>A cubic polynomial per gap, chosen so that value, slope, <em>and</em> curvature all match at
+every sample. That global smoothness constraint is solved with one tridiagonal system
+(Lecture 3), and it's what makes the spline hug curves:</p>
+$$\hat{x}(t) = A x_k + B x_{k+1} + \tfrac{h^2}{6}\big[(A^3 - A)\,x''_k + (B^3 - B)\,x''_{k+1}\big]$$
+<table>
+<tr><th>symbol</th><th>meaning</th></tr>
+<tr><td>\(A = \frac{t_{k+1}-t}{h},\; B = 1-A\)</td><td>the two linear-interpolation weights</td></tr>
+<tr><td>\(x''_k\)</td><td>second derivatives at the samples, from the tridiagonal solve</td></tr>
+<tr><td>\(h = t_{k+1}-t_k\)</td><td>gap length</td></tr>
+</table>
+<p class="small muted">Read it as: <b>linear interpolation plus a curvature correction</b>. Set the \(x''\) terms to zero and you're back to section 3.</p>
+<p>At the same worst spot, the spline gives \((-319.19, -188.30)\), error <b>0.92 m</b>.</p>
+<div class="callout insight"><span class="tag">💡 scipy fine print:</span>
+<code>scipy.interpolate.CubicSpline</code> defaults to the <em>not-a-knot</em> end condition;
+the classic "natural" spline sets end curvature to 0 instead. At 1 Hz they differ by ~2.5%
+in cumulative error (471.9 vs 459.9 m). Either is fine — name the one you used.</div>
+
+<h2 id="results">6 · Results: what wins where</h2>
+
+<p class="try">🕹️ <b>Try it:</b> the actual homework experiment, live. Switch rate, method and view —
+the error numbers update from the real 2905-point dataset.</p>
+<div class="demo-wrap"><iframe class="demo" src="demos/hw2/trajectory_reconstruction.html" height="760" title="Trajectory reconstruction explorer"></iframe></div>
+
+<figure><img src="figures/hw2/02_roundabout_1hz.svg" alt="Roundabout at 1 Hz" width="860">
+<figcaption>Fig 2 — the roundabout rebuilt from 1 Hz samples: chords (linear), kinks (quadratic), hugs (spline).</figcaption></figure>
+
+<figure><img src="figures/hw2/03_leg_02hz.svg" alt="Southern leg at 0.2 Hz" width="860">
+<figcaption>Fig 3 — at 0.2 Hz the roundabout loop falls between samples and simply vanishes.</figcaption></figure>
+
+<p>Reference numbers (sum over all 2905 timestamps; scipy default spline):</p>
+<table>
+<tr><th>rate</th><th>linear</th><th>quadratic (tiled)</th><th>cubic spline</th></tr>
+<tr><td>10 Hz</td><td class="num">45.8 m</td><td class="num">46.4 m</td><td class="num">45.9 m</td></tr>
+<tr><td>1 Hz</td><td class="num">1488.7 m</td><td class="num">878.8 m</td><td class="num">471.9 m</td></tr>
+<tr><td>0.2 Hz</td><td class="num">23 781 m</td><td class="num">23 069 m</td><td class="num">18 498 m</td></tr>
+</table>
+
+<figure><img src="figures/hw2/04_error_bars.svg" alt="Cumulative error bars" width="760">
+<figcaption>Fig 4 — same table as a picture (log scale).</figcaption></figure>
+
+<p><b>For your Q1.3 answer</b> (quality at each rate), the pattern to explain:</p>
+<ul>
+<li><b>10 Hz:</b> all three methods are within 1.5% of each other (~46 m total, 1.6 cm mean). Samples every ~1.4 m of road leave nothing to invent. Method choice is irrelevant.</li>
+<li><b>1 Hz:</b> errors grow ~30× and the methods separate: spline beats linear by 3.2×. ~14 m of road per gap means corners now live <em>between</em> samples.</li>
+<li><b>0.2 Hz:</b> catastrophic for all (mean error 6–8 m — off the road). A low sample rate hurts most where <b>curvature is high and speed is high</b>: the worst errors (20–26 m) sit exactly at the roundabout and the hairpins, while straightaways survive even 0.2 Hz almost intact.</li>
+</ul>
+<p><b>For Q1.4</b> (method differences): linear cuts chords — its error is pure corner-cutting and it can never overshoot. Quadratic bends but tiled windows add kinks, and near-collinear fast samples can make it overshoot. The spline matches slope and curvature across samples, so it tracks arcs best at moderate rates — 1 Hz is where the gap is most dramatic (3.2×). But once geometry falls between samples (0.2 Hz), smoothness can't help much: all methods fail together, and the spline's advantage shrinks to 1.3×. One more regime: with <em>noisy</em> measurements, higher-order methods chase the noise — linear's bluntness becomes a feature.</p>
+
+<h2 id="table">7 · Q2: a cos table for a robot with no FPU</h2>
+<p>No floating-point unit → compute \(\cos x\) by storing a table \((x_i, \cos x_i)\) with uniform
+spacing \(h\) and interpolating between entries. Uniform spacing is the whole trick: finding the
+right entry is integer arithmetic, \(k = \lfloor x/h \rfloor\), no search.</p>
+
+<h3>How far can a chord sag? The linear bound</h3>
+<p>On one interval the linear-interpolation error obeys the classic bound:</p>
+$$|e(x)| \;\le\; \frac{h^2}{8}\,\max |f''| \;=\; \frac{h^2}{8} \quad\text{for } f=\cos,\; |f''| = |{\cos}| \le 1$$
+<table>
+<tr><th>symbol</th><th>meaning</th></tr>
+<tr><td>\(h\)</td><td>table spacing in radians</td></tr>
+<tr><td>\(h^2/8\)</td><td>max sag of a chord across one interval — worst at the interval's midpoint</td></tr>
+<tr><td>\(\max|f''|\)</td><td>how curvy the function can get; for cos it's 1 (at the hilltops)</td></tr>
+</table>
+
+<details><summary>Worked example: solve for h (click to open)</summary><div class="body">
+<p>"6 decimal digit accuracy" = error at most \(5\times10^{-7}\) (half a unit in the 6th decimal).</p>
+$$\frac{h^2}{8} \le 5\times10^{-7} \;\Rightarrow\; h \le \sqrt{4\times10^{-6}} = 2.000\times10^{-3}\ \text{rad}$$
+$$N = \left\lceil \frac{\pi}{h} \right\rceil + 1 = 1571 + 1 = \mathbf{1572\ entries}$$
+<p>Brute-force check over 2 million test points: measured max error \(5.000\times10^{-7}\) —
+the bound is <em>tight</em> for cos, because cos really does reach curvature 1 inside the interval.</p></div></details>
+
+<h3>Quadratic: one more order of h</h3>
+<p>Interpolating with a parabola through 3 consecutive entries (nodes at \(0, h, 2h\)) gives</p>
+$$|e(x)| \;\le\; \frac{\max|f'''|}{3!}\,\max_x |(x-x_0)(x-x_1)(x-x_2)| \;=\; \frac{h^3}{9\sqrt{3}}
+\quad (\max|f'''| = \max|\sin| \le 1)$$
+<details><summary>Worked example: solve for h again (click to open)</summary><div class="body">
+$$\frac{h^3}{9\sqrt 3} \le 5\times 10^{-7} \;\Rightarrow\; h \le \big(9\sqrt{3}\cdot 5\times10^{-7}\big)^{1/3} = 0.01983\ \text{rad}$$
+$$\left\lceil \pi / 0.01983 \right\rceil = 159 \text{ intervals} \to 160 \text{ (make it even for whole parabolas)} \to \mathbf{161\ entries}$$
+<p>Brute-force check: measured \(4.855\times10^{-7} \le 5\times10^{-7}\) ✓.
+<b>Ten times less memory</b> for two extra multiplies per lookup — that's the trade.</p></div></details>
+
+<p class="try">🕹️ <b>Try it:</b> slide the table size and watch the error bumps shrink against the bound;
+the presets land exactly on the 6-digit answers.</p>
+<div class="demo-wrap"><iframe class="demo" src="demos/hw2/cos_table_explorer.html" height="620" title="Cos table explorer"></iframe></div>
+
+<figure><img src="figures/hw2/05_table_spacing.svg" alt="Error vs spacing log-log" width="760">
+<figcaption>Fig 5 — error vs h on log-log axes: slope 2 (linear) vs slope 3 (quadratic), measured on top of theory.</figcaption></figure>
+
+<div class="callout fix"><span class="tag">✏️ Fine print for your write-up:</span>
+if you read "6 digits" as \(10^{-6}\) instead of \(5\times10^{-7}\), the answers become
+h ≤ 2.83×10⁻³ → 1112 entries (linear) and h ≤ 0.0250 → 127 entries (quadratic).
+State your tolerance convention and both derivations are safe.</div>
+
+<h2 id="summary">8 · Summary</h2>
+<ul>
+<li>Interpolate trajectories as <b>x(t), y(t) separately</b> — time is the parameter the sensors give you.</li>
+<li>Error ≈ what the road does between samples. Dense sampling → method irrelevant; moderate sampling → smoothness wins; sparse sampling → everything loses, exactly at fast curves.</li>
+<li>Error bounds aren't pessimism: for cos they're tight, and they turn "how many table entries?" into one line of algebra.</li>
+</ul>
+<table>
+<tr><th>method</th><th>one-line idea</th><th>use it when</th></tr>
+<tr><td>linear</td><td>chord between neighbors</td><td>dense samples, noisy data, cheap hardware</td></tr>
+<tr><td>quadratic</td><td>parabola through 3, tiled or sliding</td><td>mid density; tables (big memory win over linear)</td></tr>
+<tr><td>cubic spline</td><td>global smooth curve, tridiagonal solve</td><td>smooth motion, moderate gaps, you can afford a solve</td></tr>
+</table>
+
+<details><summary>🧠 Self-check questions</summary><div class="body">
+<details><summary>1 · Why can't you interpolate y as a function of x here?</summary><div class="body">
+The track crosses itself and doubles back, so one x maps to several y's. Time is monotone, so x(t) and y(t) are honest functions.</div></details>
+<details><summary>2 · Why do the three Lagrange weights at t = 68.5 s sum to exactly 1?</summary><div class="body">
+Interpolating the constant function 1 must return 1 — the weights reproduce constants exactly. (A handy bug check for your code.)</div></details>
+<details><summary>3 · Halving h does what to linear-table error? To quadratic?</summary><div class="body">
+Linear error ∝ h² → 4× smaller. Quadratic ∝ h³ → 8× smaller. That's the slopes 2 and 3 in Fig 5.</div></details>
+<details><summary>4 · At 0.2 Hz the spline is smooth everywhere yet misses the roundabout. Why?</summary><div class="body">
+Smoothness is a constraint between samples; it adds no information about what happened there. The loop was never sampled, so no interpolant — however smooth — can know it existed.</div></details>
+<details><summary>5 · Your cumulative error doubles when a classmate's doesn't, at the same settings. First thing to check?</summary><div class="body">
+Whether you each sum over all 2905 timestamps or only over the hidden ones, and whether your downsample includes the final row (extrapolated tails are expensive).</div></details>
+</div></details>
+
+<div class="prevnext"><span class="muted">← Lecture 3: Interpolation (soon)</span><a href="index.html">Home</a></div>
+
+</div></main>
+</div>
+</body></html>
