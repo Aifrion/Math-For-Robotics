@@ -6,24 +6,30 @@ verified in Python), and self-contained interactive demos.
 
 ## Viewing the site
 
-The site is a zero-build static site in [`docs/`](docs/). Three ways to view it:
+**Live site: <https://aifrion.github.io/Math-For-Robotics/>** — deployed from
+[`docs/`](docs/) by GitHub Actions ([`.github/workflows/pages.yml`](.github/workflows/pages.yml))
+on every push to `main`.
 
-1. **GitHub Pages** (recommended): repo **Settings → Pages → Deploy from a branch**,
-   pick `main` (after merging) and folder `/docs`. The site then lives at
-   `https://<user>.github.io/Math-For-Robotics/`.
-2. **Locally**: `python3 -m http.server -d docs` and open <http://localhost:8000>.
-3. Any single demo in `docs/demos/` is a standalone HTML file — open it directly,
-   or embed it anywhere (e.g. Notion) by URL.
+Other ways to view it:
+
+1. **Locally**: `python3 -m http.server -d docs` and open <http://localhost:8000>.
+2. Any single demo in `docs/demos/` is a standalone HTML file — open it directly,
+   or embed it anywhere (e.g. Notion) by URL, such as
+   `https://aifrion.github.io/Math-For-Robotics/demos/lec4/minimax_explorer.html`.
 
 ## What's here
 
 | Page | Covers |
 |---|---|
-| `docs/hw2.html` | HW2 companion: trajectory reconstruction by interpolation + cos-table design |
+| `docs/lec1.html` | Transformations: rotations, Euler angles & gimbal lock, quaternions, homogeneous T |
+| `docs/lec2.html` | Linear systems: row/column views, null space, Gauss/LDU, eigen, QR, SVD |
+| `docs/lec3.html` | Interpolation: Lagrange, Vandermonde, cubic splines, bilinear, kriging |
+| `docs/lec4.html` | Function approximation: minimax, equioscillation, Chebyshev, truncation |
 | `docs/lec5.html` | Root finding: bisection → secant → Brent → Newton, Sturm, deflation, Müller |
 | `docs/lec6.html` | Optimization: golden section, simplex, Powell, CG, annealing, DP |
 | `docs/lec7.html` | Integration & ODEs: trapezoid → Romberg, RK4, Bulirsch–Stoer, stiffness |
 | `docs/lec8.html` | Subspace methods: PCA, LDA/Fisherfaces, CCA, ICA |
+| `docs/hw2.html` | HW2 companion: trajectory reconstruction by interpolation + cos-table design |
 
 - `docs/demos/<lecture>/` — standalone interactive demos (no build step, no libraries)
 - `docs/figures/<lecture>/` — compact SVG figures
@@ -32,10 +38,6 @@ The site is a zero-build static site in [`docs/`](docs/). Three ways to view it:
 - `reference-demos/`, `reference-figures/` — the original house-style reference set (lectures 2–4)
 - `slides/`, `hw2/` — course materials
 - `CLAUDE.md` — the build brief and house style guide
-
-Lectures 2–4 pages are not built yet (no slide PDFs in the repo); their reference
-demos live on in `reference-demos/` and the interpolation explorer is embedded in
-the HW2 page.
 
 ## Checking changes
 
