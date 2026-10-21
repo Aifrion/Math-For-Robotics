@@ -1,0 +1,81 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Steepest Descent vs Conjugate Gradient</title>
+<style>
+:root{--text-primary:#1f2937;--text-secondary:#4b5563;--text-muted:#9ca3af;--text-accent:#1d4ed8;--bg-accent:#dbeafe;--border:#e5e7eb;--border-strong:#cbd5e1;--border-accent:#93c5fd;--radius:8px;--bg:#fff;--blue:#2563eb;--green:#16a34a;--amber:#BA7517;--red:#dc2626}
+@media (prefers-color-scheme:dark){:root{--text-primary:#e5e7eb;--text-secondary:#cbd5e1;--text-muted:#6b7280;--text-accent:#93c5fd;--bg-accent:#1e3a8a;--border:#2f2f2f;--border-strong:#4b5563;--border-accent:#3b82f6;--bg:#191919;--blue:#60a5fa;--green:#4ade80;--amber:#fbbf24;--red:#f87171}}
+body{margin:0;padding:12px 16px;background:var(--bg);color:var(--text-primary);font:14px/1.5 -apple-system,Segoe UI,Helvetica,Arial,sans-serif;max-width:900px}
+.row{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:6px;font-size:13px}
+input[type=range]{flex:1;min-width:140px;max-width:360px}
+#out{font-size:13.5px;margin-top:6px;font-variant-numeric:tabular-nums;line-height:1.7}
+#cap{font-size:13px;color:var(--text-secondary);margin-top:4px;line-height:1.55}
+</style></head><body>
+<div class="row"><span>valley stretch κ (condition number)</span>
+<input type="range" id="k" min="1" max="60" step="1" value="8"><b id="kv"></b></div>
+<svg id="sv" width="100%" viewBox="0 0 860 430" style="touch-action:none"></svg>
+<div id="out"></div>
+<div id="cap"></div>
+<script>
+let kappa=8,start=[-2.1,0.85],drag=false;
+const sv=document.getElementById('sv');
+const css=v=>`var(--${v})`;
+const L=10,T=10,W=840,H=410,xr=[-2.6,2.6],yr=[-1.27,1.27];
+const X=x=>L+(x-xr[0])/(xr[1]-xr[0])*W,Y=y=>T+(yr[1]-y)/(yr[1]-yr[0])*H;
+function paths(){
+ const A=[[1,0],[0,kappa]];
+ const f=p=>0.5*(p[0]*p[0]+kappa*p[1]*p[1]);
+ const g=p=>[p[0],kappa*p[1]];
+ // steepest descent with exact line search
+ let x=start.slice();const sd=[x.slice()];
+ for(let i=0;i<60;i++){const gr=g(x);const gg=gr[0]*gr[0]+gr[1]*gr[1];
+  if(gg<1e-18)break;
+  const gAg=gr[0]*gr[0]+kappa*gr[1]*gr[1];
+  const lam=gg/gAg;
+  x=[x[0]-lam*gr[0],x[1]-lam*gr[1]];sd.push(x.slice())}
+ // conjugate gradient
+ x=start.slice();const cg=[x.slice()];
+ let gr=g(x),h=[-gr[0],-gr[1]];
+ for(let i=0;i<2;i++){const hAh=h[0]*h[0]+kappa*h[1]*h[1];
+  if(hAh<1e-18)break;
+  const lam=-(gr[0]*h[0]+gr[1]*h[1])/hAh;
+  x=[x[0]+lam*h[0],x[1]+lam*h[1]];cg.push(x.slice());
+  const gn=g(x);const gam=(gn[0]*gn[0]+gn[1]*gn[1])/(gr[0]*gr[0]+gr[1]*gr[1]);
+  h=[-gn[0]+gam*h[0],-gn[1]+gam*h[1]];gr=gn}
+ return {sd,cg,f}}
+function draw(){
+ document.getElementById('kv').textContent='κ = '+kappa;
+ const {sd,cg,f}=paths();
+ let s='';
+ // contour ellipses
+ for(const lev of [0.05,0.2,0.5,1,1.8,2.9,4.3,6])
+  s+=`<ellipse cx="${X(0)}" cy="${Y(0)}" rx="${Math.sqrt(2*lev)/(xr[1]-xr[0])*W}" ry="${Math.sqrt(2*lev/kappa)/(yr[1]-yr[0])*H}" fill="none" stroke="var(--border-strong)" stroke-width="0.8"/>`;
+ s+=`<circle cx="${X(0)}" cy="${Y(0)}" r="4" fill="none" stroke="${css('red')}" stroke-width="1.6"/>`;
+ const poly=(pts,col,w)=>{let d='';pts.forEach((p,i)=>{d+=(i?'L':'M')+X(p[0]).toFixed(1)+' '+Y(p[1]).toFixed(1)});
+  return `<path d="${d}" stroke="${col}" stroke-width="${w}" fill="none" stroke-linejoin="round"/>`};
+ s+=poly(sd,css('blue'),1.8)+poly(cg,css('green'),2.6);
+ sd.forEach(p=>{s+=`<circle cx="${X(p[0])}" cy="${Y(p[1])}" r="2.2" fill="${css('blue')}"/>`});
+ cg.forEach(p=>{s+=`<circle cx="${X(p[0])}" cy="${Y(p[1])}" r="4" fill="${css('green')}"/>`});
+ s+=`<circle cx="${X(start[0])}" cy="${Y(start[1])}" r="8" fill="${css('amber')}" style="cursor:grab"/>`;
+ s+=`<text x="${X(start[0])+12}" y="${Y(start[1])-10}" style="font-size:12px;font-weight:600;fill:${css('amber')}">start (drag)</text>`;
+ sv.innerHTML=s;
+ // count SD iterations to 1e-6
+ let n6=sd.length-1;
+ for(let i=0;i<sd.length;i++){if(Math.hypot(sd[i][0],sd[i][1])<1e-6){n6=i;break}}
+ const rate=(kappa-1)/(kappa+1);
+ document.getElementById('out').innerHTML=
+  `<span style="color:${css('blue')};font-weight:600">steepest descent</span>: ${n6>=60?'60+':n6} steps to reach 10⁻⁶ · error shrinks ×${rate.toFixed(3)} per step ((κ−1)/(κ+1))<br>`+
+  `<span style="color:${css('green')};font-weight:600">conjugate gradient</span>: exactly 2 steps — n steps for an n-dimensional quadratic, always`;
+ document.getElementById('cap').textContent= kappa<4?
+  'With κ near 1 the bowl is round: the gradient points almost at the minimum, and even steepest descent needs only a few steps. Stretch the valley to see the problem appear.':
+  'Each steepest-descent step is perpendicular to the previous one (exact line search), so in a stretched valley it zigzags — it pays for the same mistake over and over. Conjugate gradient corrects each new direction for the curvature already explored (h = g + γh), so the second step goes exactly to the center.'}
+function pt(e){const r=sv.getBoundingClientRect();return[(e.clientX-r.left)*860/r.width,(e.clientY-r.top)*430/r.height]}
+sv.addEventListener('pointerdown',e=>{drag=true;sv.setPointerCapture(e.pointerId);
+ const[a,b]=pt(e);start=[xr[0]+(a-L)/W*(xr[1]-xr[0]),yr[1]-(b-T)/H*(yr[1]-yr[0])];draw()});
+sv.addEventListener('pointermove',e=>{if(!drag)return;
+ const[a,b]=pt(e);start=[xr[0]+(a-L)/W*(xr[1]-xr[0]),yr[1]-(b-T)/H*(yr[1]-yr[0])];draw()});
+sv.addEventListener('pointerup',()=>drag=false);
+document.getElementById('k').oninput=e=>{kappa=+e.target.value;draw()};
+draw();
+const post=()=>parent.postMessage({demoHeight:document.body.scrollHeight+8},'*');
+addEventListener('load',post);new ResizeObserver(post).observe(document.body);
+</script></body></html>

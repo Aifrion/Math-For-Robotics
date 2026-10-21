@@ -1,0 +1,96 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Downhill Simplex Explorer</title>
+<style>
+:root{--text-primary:#1f2937;--text-secondary:#4b5563;--text-muted:#9ca3af;--text-accent:#1d4ed8;--bg-accent:#dbeafe;--border:#e5e7eb;--border-strong:#cbd5e1;--border-accent:#93c5fd;--radius:8px;--bg:#fff;--blue:#2563eb;--green:#16a34a;--amber:#BA7517;--red:#dc2626;--purple:#7c3aed}
+@media (prefers-color-scheme:dark){:root{--text-primary:#e5e7eb;--text-secondary:#cbd5e1;--text-muted:#6b7280;--text-accent:#93c5fd;--bg-accent:#1e3a8a;--border:#2f2f2f;--border-strong:#4b5563;--border-accent:#3b82f6;--bg:#191919;--blue:#60a5fa;--green:#4ade80;--amber:#fbbf24;--red:#f87171;--purple:#a78bfa}}
+body{margin:0;padding:12px 16px;background:var(--bg);color:var(--text-primary);font:14px/1.5 -apple-system,Segoe UI,Helvetica,Arial,sans-serif;max-width:900px}
+.row{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:6px}
+.row button{font:inherit;font-size:13px;padding:4px 10px;border:0.5px solid var(--border-strong);border-radius:var(--radius);background:transparent;color:var(--text-primary);cursor:pointer}
+.row button.on{background:var(--bg-accent);color:var(--text-accent);border-color:var(--border-accent)}
+canvas{width:100%;height:auto;display:block;border:0.5px solid var(--border);border-radius:var(--radius)}
+#out{font-size:13.5px;margin-top:6px;font-variant-numeric:tabular-nums}
+#cap{font-size:13px;color:var(--text-secondary);margin-top:4px;line-height:1.55}
+</style></head><body>
+<div class="row">
+ <button data-p="0" class="on">bowl</button>
+ <button data-p="1">banana (Rosenbrock)</button>
+ <button data-p="2">two valleys</button>
+ <span style="width:12px"></span>
+ <button id="bStep">Step</button><button id="bPlay">Play</button><button id="bReset">Reset</button></div>
+<canvas id="c" width="860" height="470"></canvas>
+<div id="out"></div>
+<div id="cap"></div>
+<script>
+const FUNS=[
+ {f:(x,y)=>x*x+3*y*y, xr:[-2.4,2.4], yr:[-1.5,1.5], start:[[-2,1.1],[-1.5,1.3],[-1.9,0.6]], min:[[0,0]],
+  cap:'A convex bowl: the triangle reflects its worst vertex downhill again and again, occasionally expanding when a reflection pays off, then contracts and shrinks as it settles onto the minimum. No gradients were ever computed — only f-value comparisons.'},
+ {f:(x,y)=>(1-x)*(1-x)+20*(y-x*x)*(y-x*x), xr:[-2,2], yr:[-0.8,1.9], start:[[-1.7,1.6],[-1.2,1.75],[-1.6,1.1]], min:[[1,1]],
+  cap:'Rosenbrock\'s banana valley: watch the triangle stretch thin along the curved valley floor and inch toward (1, 1). This slow crawl along narrow valleys is the classic simplex weakness — but it still gets there, derivative-free.'},
+ {f:(x,y)=>Math.min((x+1.2)*(x+1.2)+y*y, 0.65+(x-1.2)*(x-1.2)+(y-0.3)*(y-0.3))+0.07*Math.sin(5*x)*Math.sin(5*y), xr:[-2.6,2.6], yr:[-1.6,1.6], start:[[1.9,-1.2],[2.3,-0.9],[1.7,-0.7]], min:[[-1.2,0],[1.2,0.3]],
+  cap:'Two valleys: started on the right, the simplex slides into the nearer, shallower basin and stops — a local minimum. It has no way to know a better valley exists at (−1.2, 0). Deterministic descent is local; escaping needs restarts or Section 6\'s randomness.'}];
+let pi=0,simplex=null,it=0,lastMove='—',anim=null,trail=[];
+const cv=document.getElementById('c'),ctx=cv.getContext('2d');
+const css=v=>getComputedStyle(document.documentElement).getPropertyValue(v).trim();
+function reset(){const P=FUNS[pi];simplex=P.start.map(p=>p.slice());it=0;lastMove='—';trail=[];draw()}
+function step(){const {f}=FUNS[pi];it++;
+ const F=p=>f(p[0],p[1]);
+ simplex.sort((a,b)=>F(a)-F(b));
+ trail.push(simplex.map(p=>p.slice()));if(trail.length>40)trail.shift();
+ const [b,m,w]=simplex;
+ const c=[(b[0]+m[0])/2,(b[1]+m[1])/2];
+ const xr=[c[0]+(c[0]-w[0]),c[1]+(c[1]-w[1])];
+ if(F(xr)<F(b)){const xe=[c[0]+2*(xr[0]-c[0]),c[1]+2*(xr[1]-c[1])];
+  if(F(xe)<F(xr)){simplex[2]=xe;lastMove='expansion'}else{simplex[2]=xr;lastMove='reflection'}}
+ else if(F(xr)<F(m)){simplex[2]=xr;lastMove='reflection'}
+ else{const xc=[c[0]+0.5*(w[0]-c[0]),c[1]+0.5*(w[1]-c[1])];
+  if(F(xc)<F(w)){simplex[2]=xc;lastMove='contraction'}
+  else{simplex[1]=[b[0]+0.5*(m[0]-b[0]),b[1]+0.5*(m[1]-b[1])];
+   simplex[2]=[b[0]+0.5*(w[0]-b[0]),b[1]+0.5*(w[1]-b[1])];lastMove='shrink'}}
+ draw()}
+function draw(){const P=FUNS[pi],{f,xr,yr}=P,W=cv.width,H=cv.height;
+ const X=x=>(x-xr[0])/(xr[1]-xr[0])*W,Y=y=>H-(y-yr[0])/(yr[1]-yr[0])*H;
+ // contour heatmap
+ const img=ctx.createImageData(W/4,H/4);
+ let lo=1e9,hi=-1e9;const vals=[];
+ for(let j=0;j<H/4;j++)for(let i=0;i<W/4;i++){const x=xr[0]+(i+0.5)/(W/4)*(xr[1]-xr[0]),y=yr[0]+(1-(j+0.5)/(H/4))*(yr[1]-yr[0]);
+  const v=Math.log(1+Math.max(0,f(x,y)));vals.push(v);lo=Math.min(lo,v);hi=Math.max(hi,v)}
+ const dark=matchMedia('(prefers-color-scheme: dark)').matches;
+ vals.forEach((v,k)=>{const t=(v-lo)/(hi-lo);
+  const r=dark?20+60*t:255-120*t, g=dark?30+70*t:255-80*t, b2=dark?45+120*t:255-20*t;
+  img.data[4*k]=r;img.data[4*k+1]=g;img.data[4*k+2]=b2;img.data[4*k+3]=255});
+ const off=document.createElement('canvas');off.width=W/4;off.height=H/4;
+ off.getContext('2d').putImageData(img,0,0);
+ ctx.imageSmoothingEnabled=true;ctx.clearRect(0,0,W,H);ctx.drawImage(off,0,0,W,H);
+ // minima markers
+ P.min.forEach(mm=>{ctx.strokeStyle=css('--red');ctx.lineWidth=1.6;
+  ctx.beginPath();ctx.arc(X(mm[0]),Y(mm[1]),7,0,7);ctx.stroke()});
+ // trail
+ trail.forEach((tri,k)=>{ctx.strokeStyle=css('--amber');ctx.globalAlpha=0.08+0.25*k/trail.length;
+  ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(X(tri[0][0]),Y(tri[0][1]));
+  ctx.lineTo(X(tri[1][0]),Y(tri[1][1]));ctx.lineTo(X(tri[2][0]),Y(tri[2][1]));ctx.closePath();ctx.stroke()});
+ ctx.globalAlpha=1;
+ // current simplex
+ ctx.strokeStyle=css('--green');ctx.lineWidth=2.5;ctx.beginPath();
+ ctx.moveTo(X(simplex[0][0]),Y(simplex[0][1]));ctx.lineTo(X(simplex[1][0]),Y(simplex[1][1]));
+ ctx.lineTo(X(simplex[2][0]),Y(simplex[2][1]));ctx.closePath();ctx.stroke();
+ simplex.forEach((p,i)=>{ctx.fillStyle=i===0?css('--green'):i===2?css('--red'):css('--blue');
+  ctx.beginPath();ctx.arc(X(p[0]),Y(p[1]),5,0,7);ctx.fill()});
+ const F=p=>f(p[0],p[1]);
+ const bst=[...simplex].sort((a,b)=>F(a)-F(b))[0];
+ document.getElementById('out').innerHTML=
+  `iteration ${it} · last move: <b>${lastMove}</b> · best vertex (${bst[0].toFixed(3)}, ${bst[1].toFixed(3)}), f = ${F(bst).toFixed(5)}`+
+  ` · <span style="color:var(--text-muted)">green dot = best, red = worst, ring = true minimum</span>`;
+ document.getElementById('cap').textContent=P.cap}
+document.querySelectorAll('[data-p]').forEach(b=>b.onclick=()=>{pi=+b.dataset.p;
+ document.querySelectorAll('[data-p]').forEach(x=>x.classList.toggle('on',x===b));
+ if(anim){clearInterval(anim);anim=null;bPlay.textContent='Play'}reset()});
+document.getElementById('bStep').onclick=()=>step();
+document.getElementById('bReset').onclick=()=>{if(anim){clearInterval(anim);anim=null;bPlay.textContent='Play'}reset()};
+document.getElementById('bPlay').onclick=()=>{if(anim){clearInterval(anim);anim=null;bPlay.textContent='Play';return}
+ bPlay.textContent='Pause';anim=setInterval(()=>{if(it>=120){clearInterval(anim);anim=null;bPlay.textContent='Play'}else step()},200)};
+matchMedia('(prefers-color-scheme: dark)').addEventListener('change',draw);
+reset();
+const post=()=>parent.postMessage({demoHeight:document.body.scrollHeight+8},'*');
+addEventListener('load',post);new ResizeObserver(post).observe(document.body);
+</script></body></html>

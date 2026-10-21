@@ -1,0 +1,93 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Simulated Annealing TSP</title>
+<style>
+:root{--text-primary:#1f2937;--text-secondary:#4b5563;--text-muted:#9ca3af;--text-accent:#1d4ed8;--bg-accent:#dbeafe;--border:#e5e7eb;--border-strong:#cbd5e1;--border-accent:#93c5fd;--radius:8px;--bg:#fff;--blue:#2563eb;--green:#16a34a;--amber:#BA7517;--red:#dc2626;--gray:#9ca3af}
+@media (prefers-color-scheme:dark){:root{--text-primary:#e5e7eb;--text-secondary:#cbd5e1;--text-muted:#6b7280;--text-accent:#93c5fd;--bg-accent:#1e3a8a;--border:#2f2f2f;--border-strong:#4b5563;--border-accent:#3b82f6;--bg:#191919;--blue:#60a5fa;--green:#4ade80;--amber:#fbbf24;--red:#f87171;--gray:#6b7280}}
+body{margin:0;padding:12px 16px;background:var(--bg);color:var(--text-primary);font:14px/1.5 -apple-system,Segoe UI,Helvetica,Arial,sans-serif;max-width:900px}
+.row{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:6px}
+.row button{font:inherit;font-size:13px;padding:4px 10px;border:0.5px solid var(--border-strong);border-radius:var(--radius);background:transparent;color:var(--text-primary);cursor:pointer}
+.row button.on{background:var(--bg-accent);color:var(--text-accent);border-color:var(--border-accent)}
+svg{display:block}
+#out{font-size:13.5px;margin-top:6px;font-variant-numeric:tabular-nums}
+#cap{font-size:13px;color:var(--text-secondary);margin-top:4px;line-height:1.55}
+</style></head><body>
+<div class="row">
+ <button id="mAnneal" class="on">anneal (cool slowly)</button>
+ <button id="mQuench">quench (T = 0, greedy)</button>
+ <span style="width:12px"></span>
+ <button id="bPlay">Play</button><button id="bReset">New run</button></div>
+<svg id="sv" width="100%" viewBox="0 0 860 440"></svg>
+<div id="out"></div>
+<div id="cap"></div>
+<script>
+// 14 fixed "cities" (same every load so the text can reference the result)
+const C=[[.08,.25],[.18,.78],[.33,.14],[.3,.55],[.45,.86],[.52,.38],[.62,.1],[.66,.65],[.76,.3],[.84,.84],[.93,.5],[.12,.52],[.88,.12],[.5,.62]];
+let tour,cur,best,bestTour,T,step,mode='anneal',anim=null,accRecent=[],hist=[];
+const sv=document.getElementById('sv');
+const css=v=>`var(--${v})`;
+function len(t){let s=0;for(let i=0;i<t.length;i++){const a=C[t[i]],b=C[t[(i+1)%t.length]];s+=Math.hypot(a[0]-b[0],a[1]-b[1])}return s}
+let seed=12345;
+function rnd(){seed=(seed*1103515245+12345)&0x7fffffff;return seed/0x7fffffff}
+function reset(){tour=[...Array(C.length).keys()];
+ // deterministic shuffle
+ for(let i=tour.length-1;i>0;i--){const j=Math.floor(rnd()*(i+1));[tour[i],tour[j]]=[tour[j],tour[i]]}
+ cur=len(tour);best=cur;bestTour=tour.slice();T=0.35;step=0;accRecent=[];hist=[[0,cur]];draw()}
+function iterate(n){
+ for(let k=0;k<n;k++){step++;
+  if(mode==='anneal')T=0.35*Math.pow(0.99935,step);else T=0;
+  let i=1+Math.floor(rnd()*(C.length-1)),j=1+Math.floor(rnd()*(C.length-1));
+  if(i>j)[i,j]=[j,i];if(i===j)continue;
+  const t2=tour.slice(0,i).concat(tour.slice(i,j+1).reverse(),tour.slice(j+1));
+  const L2=len(t2);const dE=L2-cur;
+  const accept=dE<0||(T>0&&rnd()<Math.exp(-dE/T));
+  accRecent.push(accept?1:0);if(accRecent.length>200)accRecent.shift();
+  if(accept){tour=t2;cur=L2;if(cur<best){best=cur;bestTour=tour.slice()}}}
+ hist.push([step,cur]);if(hist.length>400)hist.shift();
+ draw()}
+function draw(){
+ const M=30,S=360,ox=20,oy=30;
+ const P=c=>[ox+c[0]*S,oy+(1-c[1])*S];
+ let s=`<rect x="${ox-10}" y="${oy-10}" width="${S+20}" height="${S+20}" fill="none" stroke="var(--border)" rx="8"/>`;
+ // best tour (green, thin) under current (blue)
+ const pathOf=t=>{let d='';t.forEach((ci,i)=>{const[a,b]=P(C[ci]);d+=(i?'L':'M')+a.toFixed(1)+' '+b.toFixed(1)});return d+'Z'};
+ s+=`<path d="${pathOf(bestTour)}" stroke="${css('green')}" stroke-width="1.2" fill="none" opacity="0.5"/>`;
+ s+=`<path d="${pathOf(tour)}" stroke="${css('blue')}" stroke-width="2" fill="none"/>`;
+ C.forEach(c=>{const[a,b]=P(c);s+=`<circle cx="${a}" cy="${b}" r="5" fill="${css('amber')}"/>`});
+ // temperature + length chart on the right
+ const Lx=430,Ly=46,Lw=400,Lh=180;
+ s+=`<rect x="${Lx}" y="${Ly}" width="${Lw}" height="${Lh}" fill="none" stroke="var(--border)"/>`;
+ s+=`<text x="${Lx}" y="${Ly-8}" style="font-size:12px;fill:var(--text-secondary)">tour length over time</text>`;
+ if(hist.length>1){const t0=hist[0][0],t1=hist[hist.length-1][0]||1;
+  const lmax=hist.reduce((m,h)=>Math.max(m,h[1]),0)*1.05,lmin=best*0.9;
+  let d='';hist.forEach((h,i)=>{const x=Lx+(h[0]-t0)/Math.max(1,t1-t0)*Lw,y=Ly+(lmax-h[1])/(lmax-lmin)*Lh;
+   d+=(i?'L':'M')+x.toFixed(1)+' '+y.toFixed(1)});
+  s+=`<path d="${d}" stroke="${css('blue')}" stroke-width="1.6" fill="none"/>`;
+  const by=Ly+(lmax-best)/(lmax-lmin)*Lh;
+  s+=`<path d="M${Lx} ${by}H${Lx+Lw}" stroke="${css('green')}" stroke-width="1" stroke-dasharray="4 3"/>`;
+  s+=`<text x="${Lx+Lw}" y="${by-5}" text-anchor="end" style="font-size:11px;fill:${css('green')}">best ${best.toFixed(3)}</text>`}
+ // thermometer
+ const Ty=270,Th=120;
+ s+=`<text x="${Lx}" y="${Ty-6}" style="font-size:12px;fill:var(--text-secondary)">temperature T = ${T.toFixed(4)}</text>`;
+ s+=`<rect x="${Lx}" y="${Ty}" width="26" height="${Th}" fill="none" stroke="var(--border-strong)" rx="6"/>`;
+ const frac=Math.min(1,T/0.35);
+ s+=`<rect x="${Lx+2}" y="${Ty+Th-frac*Th+2}" width="22" height="${Math.max(0,frac*Th-4)}" fill="${css('red')}" opacity="0.75" rx="5"/>`;
+ const acc=accRecent.length?accRecent.reduce((a,b)=>a+b,0)/accRecent.length:0;
+ s+=`<text x="${Lx+44}" y="${Ty+18}" style="font-size:12.5px;fill:var(--text-primary)">accept rate: ${(100*acc).toFixed(0)}%</text>`;
+ s+=`<text x="${Lx+44}" y="${Ty+38}" style="font-size:12px;fill:var(--text-muted)">hot: even worse tours accepted</text>`;
+ s+=`<text x="${Lx+44}" y="${Ty+55}" style="font-size:12px;fill:var(--text-muted)">cold: only improvements survive</text>`;
+ sv.innerHTML=s;
+ document.getElementById('out').innerHTML=
+  `step ${step.toLocaleString()} · current ${cur.toFixed(3)} · <b style="color:${css('green')}">best ${best.toFixed(3)}</b> · move: reverse a random segment (2-opt)`;
+ document.getElementById('cap').textContent= mode==='anneal'?
+  'Metropolis rule: always accept improvements; accept a worsening ΔE with probability exp(−ΔE/T). Early (hot), the tour happily gets worse to escape bad topology; as T cools, the system freezes. This default run ends at 3.706 — close to the true optimum 3.634 (exact, by Held-Karp), though not guaranteed to reach it.':
+  'T = 0 is pure greedy descent: only improvements accepted. It plunges fast, then jams at the first local minimum — this default run freezes at 3.953, worse than annealing’s 3.706 on the same cities (true optimum: 3.634). The one "uphill" move that would untangle it is exactly what greedy forbids.'}
+document.getElementById('mAnneal').onclick=()=>{mode='anneal';mAnneal.classList.add('on');mQuench.classList.remove('on');reset()};
+document.getElementById('mQuench').onclick=()=>{mode='quench';mQuench.classList.add('on');mAnneal.classList.remove('on');reset()};
+document.getElementById('bReset').onclick=()=>{seed=(seed+9973)&0x7fffffff;if(anim){clearInterval(anim);anim=null;bPlay.textContent='Play'}reset()};
+document.getElementById('bPlay').onclick=()=>{if(anim){clearInterval(anim);anim=null;bPlay.textContent='Play';return}
+ bPlay.textContent='Pause';anim=setInterval(()=>{if(step>=12000){clearInterval(anim);anim=null;bPlay.textContent='Play'}else iterate(60)},40)};
+reset();
+const post=()=>parent.postMessage({demoHeight:document.body.scrollHeight+8},'*');
+addEventListener('load',post);new ResizeObserver(post).observe(document.body);
+</script></body></html>

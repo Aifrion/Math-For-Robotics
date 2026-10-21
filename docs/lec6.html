@@ -1,0 +1,222 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Lecture 6 — Optimization | Math for Robotics</title>
+<link rel="stylesheet" href="assets/site.css">
+<link rel="stylesheet" href="vendor/katex/katex.min.css">
+<script defer src="vendor/katex/katex.min.js"></script>
+<script defer src="vendor/katex/auto-render.min.js"></script>
+<script defer src="assets/site.js"></script>
+</head><body>
+<div class="layout">
+<main><div class="content">
+
+<h1>Lecture 6: Optimization</h1>
+
+<div class="callout summary"><span class="tag">The one-sentence version:</span>
+most of robotics is "make this number small" — and the methods split by what you can afford:
+compare values (golden section, simplex), follow slopes (Powell, conjugate gradient),
+gamble (simulated annealing), or exhaust a graph (dynamic programming).
+<br><span class="small muted">CSE 276C, Lecture 6 · Prof. Henrik Christensen · Numerical Recipes ch. 10, Numerical Renaissance ch. 14–16.
+All numbers verified in <code>scripts/lec6/verify.py</code>.</span></div>
+
+<div class="toc"><b>Contents</b><ol>
+<li><a href="#why">Robotics is optimization</a></li>
+<li><a href="#bracket1d">1-D: bracketing an extremum &amp; golden section</a></li>
+<li><a href="#parab">1-D: parabolic interpolation (Brent again)</a></li>
+<li><a href="#simplex">Downhill simplex (Nelder–Mead)</a></li>
+<li><a href="#powell">Powell's method</a></li>
+<li><a href="#cg">Steepest descent &amp; conjugate gradient</a></li>
+<li><a href="#anneal">Stochastic search: Metropolis &amp; annealing</a></li>
+<li><a href="#dp">Dynamic programming</a></li>
+<li><a href="#summary">Summary</a></li>
+</ol></div>
+
+<h2 id="big">The big picture</h2>
+<p>Lecture 5 solved f(x) = 0. Setting the <em>derivative</em> to zero turns that machinery into
+minimization — but this lecture mostly avoids derivatives entirely, because robot objective
+functions (simulation rollouts, collision costs, sensor models) often don't come with them.
+Minimum vs maximum is immaterial: flip the sign of f.</p>
+<p style="text-align:center" class="small"><b>compare 3 values</b> (golden section) → <b>fit a parabola</b> (Brent) →
+<b>crawl a polytope</b> (simplex) → <b>line-search smartly</b> (Powell, CG) → <b>gamble</b> (annealing) → <b>enumerate stages</b> (DP)</p>
+<table>
+<tr><th>robotics problem</th><th>what you have</th><th>what you need</th><th>method</th></tr>
+<tr><td>trajectory time/energy tuning</td><td>a cost you can simulate</td><td>best parameters</td><td>simplex / Powell</td></tr>
+<tr><td>model fitting to a point swarm</td><td>smooth least-squares cost</td><td>the minimizing parameters</td><td>conjugate gradient</td></tr>
+<tr><td>path planning on a potential field</td><td>a cost landscape with local pits</td><td>a route to the goal</td><td>DP on a grid / annealing</td></tr>
+<tr><td>task ordering (inspect N sites)</td><td>combinatorial tour space</td><td>a short tour</td><td>simulated annealing</td></tr>
+</table>
+
+<h2 id="why">1 · Robotics is optimization</h2>
+<p>The slides' examples: best high-speed trajectory, best model fit to a data swarm, optimal
+coverage for fire monitoring, energy-efficient San Diego → Hawaii travel, and path planning on a
+potential field (the red route snaking between cost mountains). Different costumes, one question:
+<em>which input makes this function smallest?</em> Watch for two recurring villains:
+<b>local minima</b> and <b>narrow curved valleys</b>.</p>
+
+<h2 id="bracket1d">2 · 1-D first: bracketing an extremum</h2>
+<p>A root needs 2 points (a sign change). A <b>minimum needs 3</b>: \(a &lt; b &lt; c\) with
+\(f(b) &lt; f(a)\) and \(f(b) &lt; f(c)\) — then a minimum is trapped in \([a, c]\).</p>
+<p>Where to probe next? Demand that both possible outcomes shrink the bracket by the same factor,
+and that the ratios inside stay the same forever (self-similarity). With
+\(w = \frac{b-a}{c-a}\) that gives:</p>
+$$w^2 - 3w + 1 = 0 \;\Rightarrow\; w = \frac{3 - \sqrt 5}{2} \approx 0.38197$$
+<table>
+<tr><th>symbol</th><th>meaning</th></tr>
+<tr><td>\(w \approx 0.382\)</td><td>the short fraction of the bracket — where b sits, and where the probe goes in the long half</td></tr>
+<tr><td>\(1 - w \approx 0.618\)</td><td>bracket shrink factor per evaluation (the golden ratio conjugate)</td></tr>
+</table>
+<figure><img src="figures/lec6/01_golden_section.svg" alt="Golden section construction" width="760">
+<figcaption>Fig 1 — the golden placement: either verdict leaves a 0.618-sized bracket with the same internal ratios.</figcaption></figure>
+<details><summary>Worked example: how fast is 0.618 per step? (click to open)</summary><div class="body">
+<p>40 evaluations on \((x-2)^2 - 10\) starting from bracket [−2, 10]: final bracket width
+\(12 \times 0.618^{40} \approx 4 \times 10^{-8}\), b lands on 2.0000000 ✓.
+Like bisection, it's linear convergence — reliable, indifferent to the function, never fast.</p></div></details>
+
+<h2 id="parab">3 · Parabolic interpolation: Brent, minimization edition</h2>
+<p>Through 3 points there is one parabola; jump to its vertex:</p>
+$$x = b - \frac12\,\frac{(b-a)^2[f(b)-f(c)] - (b-c)^2[f(b)-f(a)]}{(b-a)[f(b)-f(c)] - (b-c)[f(b)-f(a)]}$$
+<p>On a quadratic it lands exactly in one step (verified: from (0, 1, 4) on \((x-2)^2-10\) it
+returns 2.0). <b>When does it fail?</b> When the three points are collinear — the denominator
+goes to zero and the "parabola" is a line with no vertex. The remedy is the same Brent pattern as
+Lecture 5: try the parabolic jump, fall back to golden section when it's degenerate or lands outside.
+With \(f'(b)\) available, the derivative's sign picks which half to search — same bracket, better information.</p>
+
+<h2 id="simplex">4 · Downhill simplex (Nelder–Mead): no gradients, no model</h2>
+<p>In N dimensions, take N+1 points (a triangle in 2-D, tetrahedron in 3-D). One move per iteration,
+tried in order — sort vertices so \(f(x_1) \le \dots \le f(x_{N+1})\), let \(\bar x\) be the centroid
+of all but the worst:</p>
+$$\text{reflect: } x_r = \bar x + \alpha(\bar x - x_{N+1}) \quad\to\quad
+\text{expand } (\gamma) \;/\; \text{contract } (\rho) \;/\; \text{shrink } (\sigma)$$
+<table>
+<tr><th>move</th><th>when</th><th>standard coefficient</th></tr>
+<tr><td>reflection</td><td>always try first: flip the worst vertex through the centroid</td><td>α = 1</td></tr>
+<tr><td>expansion</td><td>reflection beat the best point → go further</td><td>γ = 2</td></tr>
+<tr><td>contraction</td><td>reflection still worst-ish → pull inward</td><td>ρ = 0.5</td></tr>
+<tr><td>shrink</td><td>even contraction failed → collapse toward the best vertex</td><td>σ = 0.5</td></tr>
+</table>
+<figure><img src="figures/lec6/02_simplex_moves.svg" alt="Simplex moves" width="860">
+<figcaption>Fig 2 — the four moves. The triangle "oozes" downhill, stretching into valleys and shrinking at the bottom.</figcaption></figure>
+
+<p class="try">🕹️ <b>Try it:</b> step the triangle across three landscapes. <b>two valleys</b> shows the local-minimum trap that motivates Section 7.</p>
+<div class="demo-wrap"><iframe class="demo" src="demos/lec6/simplex_explorer.html" height="620" title="Simplex explorer"></iframe></div>
+
+<p class="small muted">Verified: this exact algorithm drives Rosenbrock's banana from (−1.2, 1) to the minimum (1, 1) — slowly, but with zero derivative evaluations. It's <code>scipy.optimize.minimize(method='Nelder-Mead')</code>.</p>
+
+<h2 id="powell">5 · Powell's method: line searches in smart directions</h2>
+<p>Near a minimum every smooth function looks quadratic:</p>
+$$f(\vec x) \approx c - \vec b \cdot \vec x + \tfrac12 \vec x^T A \vec x, \qquad
+A_{ij} = \frac{\partial^2 f}{\partial x_i \partial x_j} \;\;(\text{the Hessian}), \qquad \nabla f = A\vec x - \vec b$$
+<p>Powell's recipe: keep N directions \(u_i\) (initially the coordinate axes). Minimize along each in
+turn (a 1-D search from Section 2–3 each time), then <b>replace one direction with the overall
+displacement</b> \(P_n - P_0\) — the "average" direction that actually helped — and repeat.
+On a quadratic, the directions become mutually <em>conjugate</em> (\(u_i^T A\, u_j = 0\)), which makes
+successive line searches stop undoing each other.</p>
+<div class="callout gotcha"><span class="tag">⚠️ The slides' caveat:</span> "might generate linearly
+degenerate solutions" — the direction set can collapse into a subspace and stop exploring some
+dimension entirely. Practical fixes: periodically reset to the coordinate axes, or discard the
+direction of largest decrease instead (Numerical Recipes' version).</div>
+
+<h2 id="cg">6 · Steepest descent zigzags; conjugate gradient doesn't</h2>
+<p>With gradients available, the obvious move is downhill: \(P_{i+1} = P_i - \lambda \nabla f(P_i)\).
+With exact line search each step is <em>perpendicular</em> to the last — in a stretched valley that
+means zigzagging, paying for the same wall over and over. Conjugate gradient fixes the direction,
+not the step size:</p>
+$$g_{i+1} = g_i - \lambda_i A h_i, \qquad h_{i+1} = g_{i+1} + \gamma_i h_i, \qquad
+\lambda_i = \frac{g_i^T g_i}{h_i^T A h_i}, \qquad \gamma_i = \frac{g_{i+1}^T g_{i+1}}{g_i^T g_i}$$
+<table>
+<tr><th>symbol</th><th>meaning</th></tr>
+<tr><td>\(g_i\)</td><td>current (negative) gradient — the raw "downhill"</td></tr>
+<tr><td>\(h_i\)</td><td>actual search direction: new gradient <em>plus a memory</em> of the old direction</td></tr>
+<tr><td>\(\gamma_i\)</td><td>how much memory to keep (Fletcher–Reeves ratio)</td></tr>
+<tr><td>conjugate</td><td>\(h_i^T A h_j = 0\): new steps don't re-disturb directions already minimized</td></tr>
+</table>
+
+<p class="try">🕹️ <b>Try it:</b> stretch the valley with the κ slider and drag the start. Count blue dots vs green dots.</p>
+<div class="demo-wrap"><iframe class="demo" src="demos/lec6/descent_race.html" height="580" title="Descent race"></iframe></div>
+
+<details><summary>Worked example: κ = 25 (click to open)</summary><div class="body">
+<p>On \(f = \tfrac12(x^2 + 25y^2)\), steepest descent contracts the error by
+\(\frac{\kappa - 1}{\kappa + 1} = \frac{24}{26} = 0.923\) per step — 18 steps to reach \(10^{-6}\)
+from (10, 1). Conjugate gradient: error \(9.5 \to 2\times10^{-15}\) in <b>2 steps</b>, because an
+n-dimensional quadratic has exactly n conjugate directions to spend. ✓ verified.</p></div></details>
+<div class="callout insight"><span class="tag">💡 Why robots care:</span> least-squares costs
+(calibration, bundle adjustment, scan matching) are near-quadratic with huge, sparse A. CG never
+forms or factors A — it only needs products \(A h\) — which is why it (and its nonlinear cousins)
+powers large-scale SLAM back-ends.</div>
+
+<h2 id="anneal">7 · Stochastic search: when downhill isn't enough</h2>
+<p>Every method so far goes downhill, so every one gets trapped by the first local minimum
+(and for discrete spaces like tours there's no "downhill" at all). The fix is principled randomness,
+borrowed from physics. A system at temperature T occupies states by the Boltzmann distribution
+\(P(E) = e^{-E/kT}\); Metropolis (1953) turned it into an algorithm:</p>
+$$\text{accept a move with } \Delta E > 0 \text{ with probability } e^{-\Delta E / T}
+\qquad (\text{always accept } \Delta E \le 0)$$
+<p><b>Simulated annealing</b> = Metropolis + a cooling schedule. The slides' four ingredients:
+(1) a state description, (2) a random perturbation move, (3) an objective E, (4) a temperature
+lowered over time. Hot → bold exploration; cold → greedy refinement; frozen → done.</p>
+
+<p class="try">🕹️ <b>Try it:</b> the slides' travelling-salesman example, live. Run <b>anneal</b>, then <b>quench</b> on the same cities — greedy freezes worse (3.953 vs 3.706; true optimum 3.634).</p>
+<div class="demo-wrap"><iframe class="demo" src="demos/lec6/annealing_tsp.html" height="600" title="Annealing TSP"></iframe></div>
+
+<div class="callout gotcha"><span class="tag">⚠️ Gotcha:</span> annealing guarantees nothing on any
+finite schedule. It's the method of last resort for huge, lumpy, gradient-free spaces (TSP is
+NP-hard; chip layout; task ordering) — not a replacement for CG on smooth costs. Cooling too fast =
+quenching; you can watch that failure in the demo.</div>
+
+<h2 id="dp">8 · Dynamic programming: optimal by construction</h2>
+<p>When the problem is a <b>staged graph</b> — finitely many states, finitely many actions per state —
+stop searching and enumerate smartly. Bellman's principle: any tail of an optimal path is itself
+optimal. So sweep backward from the goal, labeling each node with its <b>cost-to-go</b>:</p>
+$$V(n) = \min_{\text{edges } n \to m} \big[\, c(n, m) + V(m) \,\big], \qquad V(\text{goal}) = 0$$
+<p>then the optimal route is read off by walking downhill in V. That's Dijkstra, Viterbi, and grid
+path planning in one picture:</p>
+<figure><img src="figures/lec6/03_dp_graph.svg" alt="DP stage graph" width="760">
+<figcaption>Fig 3 — cost-to-go labels (blue) filled right to left. Greedy (red) grabs the cheap first edge and pays 10; DP's labels reveal the true best path costs 6. Verified by brute force over all 4 routes.</figcaption></figure>
+<div class="callout insight"><span class="tag">💡 Why robots care:</span> a grid "cost map + backtrack"
+is exactly the slide's recipe for navigation — and the same backward-sweep idea, with expectations
+instead of minima, becomes value iteration in reinforcement learning. DP's price is the state space:
+it is exact and global, but only as big as you can enumerate.</div>
+
+<h2 id="summary">9 · Summary</h2>
+<ul>
+<li>Extremum bracketing needs <b>3 points</b>; golden section (0.618 per evaluation) is the bisection of minimization, and parabolic interpolation is its Brent-style accelerator.</li>
+<li>No gradients? <b>Simplex</b> crawls anywhere, slowly. Smooth near-quadratic cost? <b>Powell/CG</b> exploit conjugacy — CG finishes an n-D quadratic in n steps.</li>
+<li>Lumpy or discrete? <b>Annealing</b> buys global reach with randomness and patience.</li>
+<li>Staged and enumerable? <b>DP</b> is exact: cost-to-go + backtrack.</li>
+<li>Everything deterministic here is local — know which villain (local pits vs narrow valleys) your problem has before picking a weapon.</li>
+</ul>
+<table>
+<tr><th>method</th><th>one-line idea</th><th>needs</th><th>use it when</th></tr>
+<tr><td>golden section</td><td>self-similar 3-point bracket shrinking</td><td>f values only, 1-D</td><td>robust 1-D line searches</td></tr>
+<tr><td>parabolic (Brent)</td><td>jump to the fitted parabola's vertex</td><td>f values, 1-D</td><td>default 1-D minimizer</td></tr>
+<tr><td>downhill simplex</td><td>reflect/expand/contract a polytope</td><td>f values only</td><td>few dims, nasty f, quick wins</td></tr>
+<tr><td>Powell</td><td>line searches, directions learn conjugacy</td><td>f values + line search</td><td>smooth f, no gradients</td></tr>
+<tr><td>conjugate gradient</td><td>gradient + memory = no zigzag</td><td>∇f (and Av products)</td><td>large smooth least-squares</td></tr>
+<tr><td>simulated annealing</td><td>Metropolis acceptance + cooling</td><td>a move generator</td><td>combinatorial / multimodal</td></tr>
+<tr><td>dynamic programming</td><td>cost-to-go sweep + backtrack</td><td>enumerable stages</td><td>graphs, grids, exactness required</td></tr>
+</table>
+
+<details><summary>⚠️ Typos / fine print in the slides</summary><div class="body"><ul>
+<li>Slide 16: "better than f(x<sub>N−1</sub>)" should be f(x<sub>N</sub>) (the second-worst) for the standard accept-reflection rule; "Initial simple" → simplex.</li>
+<li>Slide 16's contraction: x<sub>c</sub> = x₀ + ρ(x<sub>N+1</sub> − x₀) with ρ &lt; .5 — Numerical Recipes and common practice use ρ = 0.5 exactly; also compare against f(x<sub>r</sub>) (outside contraction) in full implementations.</li>
+<li>Slide 20: f(x) ≈ c − bx + ½xᵀAx: the sign convention means b = −∇f(P) <em>at the expansion point</em>; and "∇f = Ax − b" matches that same convention.</li>
+<li>Slide 23: λ formula "g<sub>i</sub>g<sub>j</sub>" → g<sub>i</sub>ᵀg<sub>i</sub>; these are the Fletcher-Reeves updates.</li>
+<li>Slide 26 (Metropolis): "If (P(S,T) ≤ random(0,1))" — the accept test is random(0,1) &lt; exp(−ΔE/T), i.e. accept when the coin is <em>under</em> the Boltzmann factor; as written the inequality is flipped/underspecified (ΔE missing).</li>
+<li>Slide 21 (Powell step 3): "Move along P<sub>i</sub> from P<sub>i−1</sub> along u<sub>i</sub>" → move <em>to</em> P<sub>i</sub>, the minimum along u<sub>i</sub> from P<sub>i−1</sub>.</li>
+</ul></div></details>
+
+<details><summary>🧠 Self-check questions</summary><div class="body">
+<details><summary>1 · Why does bracketing a minimum need 3 points when a root needs 2?</summary><div class="body">A root is a sign change — two values of opposite sign certify it. A minimum is certified by a <em>dip</em>: you need a middle point lower than both ends. No 2 points can ever certify a dip.</div></details>
+<details><summary>2 · Where does the golden ratio come from in golden section?</summary><div class="body">Two demands: both outcomes shrink the bracket equally, and the new bracket has the same internal proportions (so the rule can repeat). Those give w² − 3w + 1 = 0, i.e. w = 0.382, shrink factor 0.618.</div></details>
+<details><summary>3 · Nelder–Mead never computes a derivative. What does it use instead, and what does that cost?</summary><div class="body">Only order comparisons of f at N+1 points — which is why it survives noisy, kinked, black-box costs. The cost: linear-ish convergence and painful crawling along curved valleys (watch the banana preset).</div></details>
+<details><summary>4 · Why exactly n steps for CG on an n-dimensional quadratic?</summary><div class="body">It builds directions that are A-conjugate: minimizing along a new one never un-minimizes the previous ones. n independent conjugate directions span the space, so after n exact line searches nothing is left. (Floating point blurs this slightly in practice.)</div></details>
+<details><summary>5 · In annealing, why ever accept a move that makes things worse?</summary><div class="body">Because the only path out of a local basin goes uphill. The Boltzmann rule accepts small uphill moves often and large ones rarely, scaled by T — hot enough to escape early, cold enough to converge late. At T = 0 you recover greedy descent and its traps (the quench button).</div></details>
+<details><summary>6 · Your path-planning grid has 10⁶ cells. Is DP feasible? What if the state includes velocity too?</summary><div class="body">10⁶ cells × a few actions is trivially feasible (one backward sweep). Add a 100-level velocity dimension and it's 10⁸ — borderline. State-space size is DP's only real enemy (the "curse of dimensionality").</div></details>
+</div></details>
+
+<div class="prevnext"><a href="lec5.html">← Lecture 5: Root Finding</a><a href="lec7.html">Lecture 7: Integration &amp; ODEs →</a></div>
+
+</div></main>
+</div>
+</body></html>
