@@ -1,0 +1,78 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>The ε-Slice Trick</title>
+<style>
+:root{--text-primary:#1f2937;--text-secondary:#4b5563;--text-muted:#9ca3af;--text-success:#15803d;--text-accent:#1d4ed8;--bg-accent:#dbeafe;--border:#e5e7eb;--border-strong:#cbd5e1;--border-accent:#93c5fd;--radius:8px;--bg:#fff;--blue:#378ADD;--pink:#D4537E;--green:#16a34a;--amber:#BA7517;--purple:#7c3aed}
+@media (prefers-color-scheme:dark){:root{--text-primary:#e5e7eb;--text-secondary:#cbd5e1;--text-muted:#6b7280;--text-success:#4ade80;--text-accent:#93c5fd;--bg-accent:#1e3a8a;--border:#2f2f2f;--border-strong:#4b5563;--border-accent:#3b82f6;--bg:#191919;--blue:#60a5fa;--pink:#f472b6;--green:#4ade80;--amber:#fbbf24;--purple:#a78bfa}}
+body{margin:0;padding:12px 16px;background:var(--bg);color:var(--text-primary);font:14px/1.5 -apple-system,Segoe UI,Helvetica,Arial,sans-serif;max-width:900px}
+.btns{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:6px}
+.btns button{font:inherit;font-size:13px;padding:4px 10px;border:0.5px solid var(--border-strong);border-radius:var(--radius);background:transparent;color:var(--text-primary);cursor:pointer}
+.btns button.on{background:var(--bg-accent);color:var(--text-accent);border-color:var(--border-accent)}
+.row{display:grid;grid-template-columns:190px 1fr 60px;gap:10px;align-items:center;margin:3px 0;font-size:13px}
+input[type=range]{width:100%}
+#out{font-size:13.5px;margin-top:4px;font-variant-numeric:tabular-nums}
+#cap{font-size:13px;color:var(--text-secondary);margin-top:4px;line-height:1.55}
+</style></head><body>
+<div class="btns"><span>bump shape η:</span>
+<button data-e="0" class="on">sin(πx)</button><button data-e="1">x(1−x)</button><button data-e="2">sin(3πx)</button>
+<span style="margin-left:14px">base curve:</span>
+<button data-b="0" class="on">optimal (line)</button><button data-b="1">not optimal</button></div>
+<div class="row"><span>ε — how much bump</span><input type="range" id="ep" min="-0.35" max="0.35" step="0.01" value="0.2"><b id="epv"></b></div>
+<svg id="sv" width="100%" viewBox="0 0 860 400"></svg>
+<div id="out"></div>
+<div id="cap"></div>
+<script>
+// Phi(eps) = L(base + eps*eta). At an optimal base, Phi'(0)=0 for EVERY eta.
+let ei=0, bi=0, ep=0.2;
+const sv=document.getElementById('sv');
+const css=v=>`var(--${v})`;
+const ETA=[x=>Math.sin(Math.PI*x), x=>4*x*(1-x), x=>Math.sin(3*Math.PI*x)];
+const BASE=[x=>x, x=>x+0.3*Math.sin(Math.PI*x)];
+const M=160;
+function curve(e){const p=[];for(let i=0;i<=M;i++){const x=i/M;p.push([x,BASE[bi](x)+e*ETA[ei](x)])}return p}
+function len(p){let s=0;for(let i=1;i<p.length;i++)s+=Math.hypot(p[i][0]-p[i-1][0],p[i][1]-p[i-1][1]);return s}
+const mkP=(Lx,Ty,Wd,Ht,x0,x1,y0,y1)=>({X:v=>Lx+(v-x0)/(x1-x0)*Wd, Y:v=>Ty+(y1-v)/(y1-y0)*Ht,Lx,Ty,Wd,Ht});
+const PA=mkP(55,40,360,320,-0.02,1.02,-0.45,1.45), PB=mkP(495,40,330,320,-0.37,0.37,0.95,2.0);
+function frame(P,title){return `<rect x="${P.Lx}" y="${P.Ty}" width="${P.Wd}" height="${P.Ht}" fill="none" stroke="var(--border-strong)" stroke-width="0.5"/><text x="${P.Lx+P.Wd/2}" y="${P.Ty-10}" text-anchor="middle" style="font-size:13px;font-weight:600;fill:var(--text-primary)">${title}</text>`}
+function draw(){
+ document.getElementById('epv').textContent=ep.toFixed(2).replace('-','−');
+ let s=frame(PA,'the curve y = y₀ + ε·η')+frame(PB,'Φ(ε) = length of that curve');
+ // left: base curve, bumped curve
+ let d0='',d1='';
+ const c0=curve(0),c1=curve(ep);
+ c0.forEach((p,i)=>d0+=(i?'L':'M')+PA.X(p[0]).toFixed(1)+' '+PA.Y(p[1]).toFixed(1));
+ c1.forEach((p,i)=>d1+=(i?'L':'M')+PA.X(p[0]).toFixed(1)+' '+PA.Y(p[1]).toFixed(1));
+ s+=`<path d="${d0}" stroke="var(--text-muted)" stroke-width="1.6" stroke-dasharray="5 4" fill="none"/>`;
+ s+=`<path d="${d1}" stroke="${css('blue')}" stroke-width="2.6" fill="none"/>`;
+ s+=`<circle cx="${PA.X(0)}" cy="${PA.Y(BASE[bi](0))}" r="5.5" fill="${css('amber')}"/><circle cx="${PA.X(1)}" cy="${PA.Y(BASE[bi](1))}" r="5.5" fill="${css('amber')}"/>`;
+ // right: Phi curve
+ let dphi='';const K=100;let ymin=1e9,ymax=-1e9;const vals=[];
+ for(let k=0;k<=K;k++){const e=-0.35+0.7*k/K;const v=len(curve(e));vals.push([e,v]);ymin=Math.min(ymin,v);ymax=Math.max(ymax,v)}
+ vals.forEach((p,i)=>dphi+=(i?'L':'M')+PB.X(p[0]).toFixed(1)+' '+PB.Y(p[1]).toFixed(1));
+ s+=`<path d="${dphi}" stroke="${css('purple')}" stroke-width="2.4" fill="none"/>`;
+ const v0=len(curve(0)),ve=len(curve(ep));
+ // slope at 0
+ const h=0.01, sl=(len(curve(h))-len(curve(-h)))/(2*h);
+ const x0p=PB.X(0),y0p=PB.Y(v0);
+ const dx=0.12;
+ s+=`<path d="M${PB.X(-dx)} ${PB.Y(v0-sl*dx)}L${PB.X(dx)} ${PB.Y(v0+sl*dx)}" stroke="${bi?css('pink'):css('green')}" stroke-width="2" stroke-dasharray="4 3"/>`;
+ s+=`<circle cx="${x0p}" cy="${y0p}" r="5" fill="${bi?css('pink'):css('green')}"/>`;
+ s+=`<circle cx="${PB.X(ep)}" cy="${PB.Y(ve)}" r="6" fill="${css('blue')}"/>`;
+ for(const t of[-0.3,0,0.3])s+=`<text x="${PB.X(t)}" y="${PB.Ty+PB.Ht+16}" text-anchor="middle" style="font-size:11px;fill:var(--text-muted)">${t||'0'}</text>`;
+ s+=`<text x="${PB.X(0)}" y="${PB.Ty+PB.Ht+32}" text-anchor="middle" style="font-size:11.5px;fill:var(--text-muted)">ε</text>`;
+ sv.innerHTML=s;
+ document.getElementById('out').innerHTML=
+  `Φ(${ep.toFixed(2).replace('-','−')}) = <b style="color:${css('blue')}">${ve.toFixed(4)}</b> · slope at ε = 0: <b style="color:${bi?css('pink'):css('green')}">Φ′(0) = ${sl.toFixed(4).replace('-','−')}</b>`+
+  (bi?` ≠ 0 — this base curve is <b>not</b> optimal: the bump direction η can shorten it`:` = 0 ✓ — flat in this direction`);
+ document.getElementById('cap').textContent= bi?
+  'A non-optimal base curve: some bump directions have Φ′(0) ≠ 0, i.e. there is downhill to walk. That leftover slope is exactly the Euler expression ∫[F_y − d/dx F_y′]·η dx — nonzero because the bracket isn’t zero yet.'
+  :'The optimal base curve: try all three bump shapes η — the slope at ε = 0 is zero for every one. That is the definition of a functional’s extremum, and demanding it for ALL η forces F_y − d/dx F_y′ = 0 pointwise: Euler’s equation.'}
+document.querySelectorAll('[data-e]').forEach(b=>b.onclick=()=>{
+ document.querySelectorAll('[data-e]').forEach(z=>z.classList.toggle('on',z===b));ei=+b.dataset.e;draw()});
+document.querySelectorAll('[data-b]').forEach(b=>b.onclick=()=>{
+ document.querySelectorAll('[data-b]').forEach(z=>z.classList.toggle('on',z===b));bi=+b.dataset.b;draw()});
+document.getElementById('ep').oninput=e=>{ep=+e.target.value;draw()};
+draw();
+const __post=()=>parent.postMessage({demoHeight:document.body.scrollHeight+8},'*');
+addEventListener('load',__post);new ResizeObserver(__post).observe(document.body);
+</script></body></html>

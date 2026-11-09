@@ -1,0 +1,199 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Lecture 9 — Calculus of Variations | Math for Robotics</title>
+<link rel="stylesheet" href="assets/site.css">
+<link rel="stylesheet" href="vendor/katex/katex.min.css">
+<script defer src="vendor/katex/katex.min.js"></script>
+<script defer src="vendor/katex/auto-render.min.js"></script>
+<script defer src="assets/site.js"></script>
+</head><body>
+<div class="layout">
+<main><div class="content">
+
+<h1>Lecture 9: Calculus of Variations</h1>
+
+<div class="callout summary"><span class="tag">The one-sentence version:</span>
+Lecture 6 minimized over <em>numbers</em>; this lecture minimizes over <em>whole curves</em> —
+and the trick that makes it possible is squashing function space down to one slider ε, where
+"the best curve" becomes ordinary calculus: Φ′(0) = 0, which unpacks into <b>Euler's
+equation</b>.
+<br><span class="small muted">CSE 276C, Lecture 9 · Prof. Henrik Christensen · (full treatment:
+MATH 201C). All numbers verified in <code>scripts/lec9/verify.py</code>.</span></div>
+
+<div class="toc"><b>Contents</b><ol>
+<li><a href="#why">Optimizing over functions</a></li>
+<li><a href="#functional">What a functional is</a></li>
+<li><a href="#slice">The ε-slice trick</a></li>
+<li><a href="#euler">Euler's equation</a></li>
+<li><a href="#shortest">Worked: the shortest path</a></li>
+<li><a href="#constrained">Constraints: the isoperimetric problem</a></li>
+<li><a href="#extensions">Extensions</a></li>
+<li><a href="#summary">Summary</a></li>
+</ol></div>
+
+<h2 id="big">The big picture</h2>
+<p>Every optimization so far had finitely many knobs: n joint angles, n polynomial coefficients.
+A robot <em>trajectory</em> is not finitely many knobs — it's a knob at every instant. Calculus
+of variations is the machinery for "find the best <em>function</em>", and its central result turns
+each such problem into a differential equation (which Lecture 7 taught you to solve).</p>
+<table>
+<tr><th>robotics problem</th><th>the functional being minimized</th><th>the optimal function</th></tr>
+<tr><td>smoothest / shortest arm motion</td><td>path length, or ∫ (jerk)² dt</td><td>the planned trajectory q(t)</td></tr>
+<tr><td>minimum-energy walking gait</td><td>∫ power dt over a stride</td><td>the gait cycle</td></tr>
+<tr><td>mechanics itself</td><td>the action ∫ (T − V) dt</td><td>the motion nature picks (least action)</td></tr>
+<tr><td>vision: image flow, reconstruction</td><td>data mismatch + smoothness integral</td><td>the recovered field or surface</td></tr>
+</table>
+
+<h2 id="why">1 · Optimizing over functions</h2>
+<p>For \(f:\mathbb R^n \to \mathbb R\), "x* is a local minimum" means \(f(x)\ge f(x^*)\) nearby,
+and the necessary condition is \(\nabla f(x^*) = 0\). The whole lecture is one question: <b>what
+is the analogue when the thing you're choosing is a function?</b> You need (1) a "neighborhood of
+a function" and (2) a "gradient with respect to a function". The ε-trick below supplies both.</p>
+
+<h2 id="functional">2 · What a functional is</h2>
+<p>A functional eats a whole function and returns one number:</p>
+$$J(y) = \int_{x_0}^{x_1} F\big(x,\, y(x),\, y'(x)\big)\, dx$$
+<table>
+<tr><th>symbol</th><th>meaning</th></tr>
+<tr><td>\(y(x)\)</td><td>a candidate curve with pinned endpoints \(y(x_0)=y_0,\ y(x_1)=y_1\)</td></tr>
+<tr><td>\(F(x, y, y')\)</td><td>the local cost rate — what one sliver dx charges, given where you are and how steep you are</td></tr>
+<tr><td>\(J\)</td><td>the total bill for the whole curve: one number per curve</td></tr>
+</table>
+<p>The lecture's running example is arc length, \(F = \sqrt{1 + y'^2}\): each sliver charges its
+hypotenuse. The slides' gallery of problems all look like this — geodesics on a sphere, minimal
+surfaces, the hanging chain, light through layered media — same template, different F.</p>
+<figure><img src="figures/lec9/01_functional.svg" alt="Curves with their lengths and the Phi slice" width="860">
+<figcaption>Fig 1 — left: three curves between the same endpoints and their one-number verdicts (1.4142, 1.5011, 1.7983 — all verified). Right: the ε-slice through function space; the optimum sits at the bottom, flat.</figcaption></figure>
+
+<h2 id="slice">3 · The ε-slice trick</h2>
+<p>Function space is infinite-dimensional — you can't "take the gradient" directly. The slides'
+move: pick <em>any</em> bump shape \(\eta(x)\) that vanishes at the endpoints, and look only at
+the one-parameter family</p>
+$$y(x) = y^*(x) + \varepsilon\,\eta(x), \qquad
+\Phi(\varepsilon) = \int_{x_0}^{x_1} F(x, y, y')\,dx$$
+<p>Now Φ is an ordinary function of one real number. If y* is optimal, every such slice has its
+minimum at ε = 0, so</p>
+$$\Phi'(0) = 0 \quad \text{for every admissible } \eta$$
+<p>🕹️ <b>Try it:</b> slide ε, switch bump shapes, then switch to a non-optimal base curve and
+watch the slope at 0 come alive.</p>
+<div class="demo-wrap"><iframe class="demo" src="demos/lec9/epsilon_slice.html" height="560" title="Epsilon slice explorer"></iframe></div>
+<div class="callout gotcha"><span class="tag">⚠️ Notation hazard:</span> the slides write
+\(y(x) = y^*(x) + \epsilon y(x)\) — the same letter y for the unknown optimum's perturbation and
+for the candidate curve. Most textbooks write the bump as η (eta); this page does too. Keep them
+straight: y* is the (unknown) winner, η is any test wiggle, ε is how much of it you add.</div>
+
+<h2 id="euler">4 · Euler's equation</h2>
+<p>Differentiate Φ under the integral (chain rule through y and y′), then integrate the
+\(F_{y'}\eta'\) term by parts — the boundary term dies because η vanishes at the endpoints:</p>
+$$\Phi'(0) = \int_{x_0}^{x_1} \Big[ F_y - \frac{d}{dx} F_{y'} \Big]\, \eta\, dx = 0
+\quad\text{for all } \eta
+\;\;\Longrightarrow\;\;
+\boxed{\,F_y - \frac{d}{dx}F_{y'} = 0\,}\ \text{ on } [x_0, x_1]$$
+<table>
+<tr><th>symbol</th><th>meaning</th></tr>
+<tr><td>\(F_y\)</td><td>how the local cost reacts to moving the curve <em>up</em> at a point</td></tr>
+<tr><td>\(F_{y'}\)</td><td>how it reacts to <em>tilting</em> the curve there</td></tr>
+<tr><td>\(\frac{d}{dx}F_{y'}\)</td><td>how that tilt-sensitivity itself changes along the curve</td></tr>
+<tr><td>the bracket = 0</td><td>pointwise balance: no local move up/down can cut the total bill</td></tr>
+</table>
+<div class="callout key"><span class="tag">💡 Why it must hold pointwise:</span> the integral
+\(\int [\,\cdot\,]\,\eta\,dx\) is zero for <em>every</em> bump η. If the bracket were positive on
+some little interval, choose η as a bump living only there — the integral would be positive.
+Contradiction. So the bracket is zero everywhere: one condition per point, i.e. a differential
+equation. That's the "gradient = 0" of function space — and it hands the problem to Lecture 7's
+ODE solvers.</div>
+
+<h2 id="shortest">5 · Worked: the shortest path</h2>
+<p>For arc length \(F = \sqrt{1+y'^2}\): \(F_y = 0\) and \(F_{y'} = y'/\sqrt{1+y'^2}\), so Euler says</p>
+$$\frac{d}{dx}\,\frac{y'}{\sqrt{1+y'^2}} = 0
+\;\Rightarrow\; \frac{y'}{\sqrt{1+y'^2}} = c
+\;\Rightarrow\; y' = m
+\;\Rightarrow\; y = mx + b$$
+<p>The shortest curve between two points is a straight line — derived, not assumed.</p>
+<details><summary>Worked example, checked numerically (click to open)</summary><div class="body">
+<p>Discretize y on 41 nodes between (0,0) and (1,1), start from the wiggly curve
+\(y = x + 0.3\sin 2\pi x\) (length 1.7983), and let a generic optimizer (L-BFGS) minimize the
+summed segment lengths. It converges to the straight line to 4 × 10⁻⁶ per node, length
+1.414214 = √2. And on the line, Φ′(0) = 0 held for all three test bumps η = sin πx, x(1−x),
+sin 3πx (each ≤ 10⁻⁸), with Φ″(0) &gt; 0 — a genuine minimum
+(<code>scripts/lec9/verify.py</code>).</p></div></details>
+
+<h2 id="constrained">6 · Constraints: the isoperimetric problem</h2>
+<p>The slides' second act: shortest curve from \((x_0,0)\) to \((x_1,0)\) that holds a <b>fixed
+area</b> \(A=\int y\,dx\) below it. Constrained functional optimization = variational calculus +
+Lecture 6's Lagrange multipliers. Perturb with <em>two</em> bumps (ε₁η, ε₂ξ), build
+\(E = \Phi + \lambda(\Psi - c)\), demand all partials vanish, and the same by-parts argument gives
+the constrained Euler equation:</p>
+$$\Big[F_y - \frac{d}{dx}F_{y'}\Big] \;+\; \lambda_0\Big[G_y - \frac{d}{dx}G_{y'}\Big] = 0$$
+<p>With \(F=\sqrt{1+y'^2}\) (length) and \(G=y\) (area): \(F_y = 0,\ G_y = 1,\ G_{y'} = 0\), so</p>
+$$\frac{y'}{\sqrt{1+y'^2}} = \lambda_0 x + c
+\;\Longrightarrow\;
+(y - k)^2 + \Big(x + \frac{c}{\lambda_0}\Big)^2 = \frac{1}{\lambda_0^2}$$
+<p>— a <b>circle arc</b> of radius \(1/\lambda_0\). The multiplier is literally the curve's
+curvature: the harder the constraint pulls, the tighter the arc.</p>
+<details><summary>Worked example with real numbers (click to open)</summary><div class="body">
+<p>Endpoints (0,0) and (1,0), area A = 0.3. Geometry: a circular segment over a chord of length 1
+with area 0.3 has half-angle 1.35439 rad and radius <b>R = 0.51194</b>; arc length 2Rθ = 1.38673.
+A constrained optimizer (SLSQP) over 41 nodes, told nothing about circles, lands on that arc to
+8 × 10⁻⁴ per node. Reading \(y'/\sqrt{1+y'^2}\) off the optimized curve and fitting a line gives
+slope |λ₀| = 1.962 — and 1/R = 1.953 ✓. The multiplier <em>is</em> the inverse radius.</p></div></details>
+<figure><img src="figures/lec9/02_isoperimetric.svg" alt="Isoperimetric problem: three curves with area 0.3" width="860">
+<figcaption>Fig 2 — three curves holding area 0.3: tent (L = 1.5592), parabola (L = 1.4047), circle arc (L = 1.3867 — the Euler + Lagrange solution, radius 1/λ₀).</figcaption></figure>
+<p>🕹️ <b>Try it:</b> wreck the curve, then relax — gradient descent on the functional discovers
+the line, and with the area constraint on, the circle arc:</p>
+<div class="demo-wrap"><iframe class="demo" src="demos/lec9/path_relaxer.html" height="560" title="Path relaxer"></iframe></div>
+
+<h2 id="extensions">7 · Extensions</h2>
+<p>The slides close with the directions this generalizes, same recipe with more terms:
+multiple unknown functions (one Euler equation each — robot trajectories q₁(t)…qₙ(t)),
+higher derivatives in F (∫ acceleration² or jerk² for smooth motion — this is where
+minimum-jerk trajectories and spline-like planners come from), and light rays through
+inhomogeneous media (Fermat's least time — Snell's law falls out of Euler's equation).
+The slide-10 principle from Lecture 6 — "to minimize P, solve P′ = 0" — now covers
+functions too.</p>
+
+<h2 id="summary">8 · Summary</h2>
+<ul>
+<li>A functional maps a curve to a number; optimizing one means finding a <em>function</em>, not a point.</li>
+<li>The ε-slice makes it ordinary calculus: at the optimum, Φ′(0) = 0 for <em>every</em> bump η.</li>
+<li>That forces the pointwise Euler equation \(F_y - \frac{d}{dx}F_{y'} = 0\) — a differential equation, solvable by Lecture 7.</li>
+<li>Constraints join via Lagrange: bracket(F) + λ₀·bracket(G) = 0. In the isoperimetric problem λ₀ = 1/R: the multiplier has a geometric meaning.</li>
+<li>Shortest path → straight line; fixed-area shortest curve → circle arc. Both checked by blind numerical optimization.</li>
+</ul>
+<table>
+<tr><th>problem type</th><th>condition</th><th>what it gives you</th></tr>
+<tr><td>finite knobs (Lec 6)</td><td>\(\nabla f = 0\)</td><td>n equations, n unknowns</td></tr>
+<tr><td>a free curve</td><td>\(F_y - \frac{d}{dx}F_{y'} = 0\)</td><td>an ODE for y(x)</td></tr>
+<tr><td>a curve + integral constraint</td><td>bracket(F) + λ₀ bracket(G) = 0</td><td>an ODE with one extra unknown λ₀, fixed by the constraint</td></tr>
+</table>
+
+<details><summary>⚠️ Typos in the slides to watch out for</summary><div class="body"><ul>
+<li>Slide 24 (circle result): the right-hand side is printed as \(1/\lambda_0\) — it should be
+\(1/\lambda_0^{2}\): the radius is \(1/\lambda_0\), so radius² = 1/λ₀². Verified numerically
+(recovered λ₀ = 1.962 vs 1/R = 1.953, while 1/R² = 3.82 doesn't match) and symbolically in
+<code>verify.py</code>. The same slide also mixes \(k\), \(k/\lambda_0\) and writes \(1/\lambda\)
+for \(1/\lambda_0\) mid-derivation — the constants get absorbed, but don't try to match them
+line-by-line.</li>
+<li>Slide 11: the perturbation is written \(y(x) = y^*(x) + \epsilon y(x)\) — the same symbol y
+on both sides. Read the second y as the bump η.</li>
+<li>Slide 6: "path of light traveling through an inhomogenous <b>curve</b>" → inhomogeneous
+<b>medium</b> (and "inhomogeneous" is the spelling).</li>
+<li>Slide 21: the partials are typeset as \(\frac{\partial}{\epsilon_1}E\), \(\frac{\partial}{\lambda}E\)
+— missing the ∂ in the denominators: read \(\frac{\partial}{\partial \epsilon_1}\) etc.</li>
+</ul></div></details>
+
+<details><summary>🧠 Self-check questions</summary><div class="body">
+<details><summary>1 · Why is one slider ε enough to handle an infinite-dimensional space?</summary><div class="body">It isn't — one slice gives one necessary condition. The power comes from quantifying over <em>all</em> bump shapes η: Φ′(0) = 0 for every η forces the bracket to vanish pointwise. Infinitely many sliders, each contributing one ordinary-calculus fact.</div></details>
+<details><summary>2 · Where exactly does "η vanishes at the endpoints" get used, and what breaks without it?</summary><div class="body">In the integration by parts: the boundary term \(F_{y'}\eta\,\big|_{x_0}^{x_1}\) is discarded because η = 0 there. With free endpoints that term survives and adds the natural boundary condition \(F_{y'} = 0\) at the free end — a different (and also useful) problem.</div></details>
+<details><summary>3 · For F = √(1+y′²), why does Euler's equation collapse to "y′ is constant"?</summary><div class="body">F has no explicit y, so F_y = 0 and the equation says d/dx F_{y′} = 0: the quantity y′/√(1+y′²) is conserved along x. That function of y′ is monotone, so constant F_{y′} means constant y′. Conservation laws from symmetries — F independent of y is the simplest case.</div></details>
+<details><summary>4 · In the area-constrained problem, what does a <em>larger</em> required area do to λ₀?</summary><div class="body">More area over the same chord needs a fatter bulge — a smaller radius R. Since λ₀ = 1/R, the multiplier grows: λ₀ prices the constraint, and a more demanding constraint costs more curvature. (At A = π/8 ≈ 0.39 the arc is a full semicircle, R = 0.5.)</div></details>
+<details><summary>5 · Your trajectory optimizer represents q(t) by 50 samples and runs gradient descent on them. What is it doing, in this lecture's language?</summary><div class="body">Descending a discretized functional — exactly the path-relaxer demo. At convergence, the discrete stationarity condition it satisfies is a finite-difference Euler equation; refining the samples converges to the continuous one. Modern trajectory optimization (CHOMP and friends) is this idea industrialized.</div></details>
+<details><summary>6 · How would you set up "shortest path in 3-D" with this machinery?</summary><div class="body">Two unknown functions y(x), z(x), functional ∫√(1+y′²+z′²)dx, and one Euler equation per function: d/dx(y′/√·) = 0 and d/dx(z′/√·) = 0. Both slopes constant → a straight line in 3-D. The "extensions" slide's recipe: one bracket per unknown function.</div></details>
+</div></details>
+
+<div class="prevnext"><a href="lec8.html">← Lecture 8: Subspace Methods</a><span class="muted">Lecture 10: Spectral Analysis (soon)</span></div>
+
+</div></main>
+</div>
+</body></html>

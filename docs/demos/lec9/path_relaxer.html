@@ -1,0 +1,97 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Path Relaxer</title>
+<style>
+:root{--text-primary:#1f2937;--text-secondary:#4b5563;--text-muted:#9ca3af;--text-success:#15803d;--text-accent:#1d4ed8;--bg-accent:#dbeafe;--border:#e5e7eb;--border-strong:#cbd5e1;--border-accent:#93c5fd;--radius:8px;--bg:#fff;--blue:#378ADD;--pink:#D4537E;--green:#16a34a;--amber:#BA7517}
+@media (prefers-color-scheme:dark){:root{--text-primary:#e5e7eb;--text-secondary:#cbd5e1;--text-muted:#6b7280;--text-success:#4ade80;--text-accent:#93c5fd;--bg-accent:#1e3a8a;--border:#2f2f2f;--border-strong:#4b5563;--border-accent:#3b82f6;--bg:#191919;--blue:#60a5fa;--pink:#f472b6;--green:#4ade80;--amber:#fbbf24}}
+body{margin:0;padding:12px 16px;background:var(--bg);color:var(--text-primary);font:14px/1.5 -apple-system,Segoe UI,Helvetica,Arial,sans-serif;max-width:900px}
+.btns{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:6px}
+.btns button{font:inherit;font-size:13px;padding:4px 10px;border:0.5px solid var(--border-strong);border-radius:var(--radius);background:transparent;color:var(--text-primary);cursor:pointer}
+.btns button.on{background:var(--bg-accent);color:var(--text-accent);border-color:var(--border-accent)}
+#out{font-size:13.5px;margin-top:4px;font-variant-numeric:tabular-nums}
+#cap{font-size:13px;color:var(--text-secondary);margin-top:4px;line-height:1.55}
+</style></head><body>
+<div class="btns">
+<button data-m="0" class="on">shortest path</button><button data-m="1">shortest path holding area 0.3</button>
+<span style="flex:1"></span>
+<button id="wig">wiggle it</button><button id="relax">▶ relax</button><button id="stop">⏸</button></div>
+<svg id="sv" width="100%" viewBox="0 0 860 430" style="touch-action:none"></svg>
+<div id="out"></div>
+<div id="cap"></div>
+<script>
+// Minimize discrete length sum sqrt(dx^2+dy^2) by gradient descent on node
+// heights. Constrained mode adds a penalty mu*(area-A)^2 (isoperimetric).
+const N=25, A=0.30, sv=document.getElementById('sv');
+const css=v=>`var(--${v})`;
+const L=60,T=20,W=740,Hh=360, XMIN=-0.04,XMAX=1.04,YMIN=-0.12,YMAX=0.78;
+const X=v=>L+(v-XMIN)/(XMAX-XMIN)*W, Y=v=>T+(YMAX-v)/(YMAX-YMIN)*Hh;
+const IX=p=>XMIN+(p-L)/W*(XMAX-XMIN), IY=p=>YMAX-(p-T)/Hh*(YMAX-YMIN);
+const xs=Array.from({length:N},(_,i)=>i/(N-1));
+let mode=0, y=xs.map(v=>0), run=null, drag=-1;
+const yEnd=()=>mode===0?[0,0.0]:[0,0];
+function seed(){y=xs.map(v=>mode===0?0:1.2*Math.min(v,1-v));y[0]=0;y[N-1]=0}
+function wiggle(){for(let i=1;i<N-1;i++)y[i]+=0.22*Math.sin(3*Math.PI*xs[i])+0.1*(Math.random()-0.5);draw()}
+function len(yy){let s=0;for(let i=1;i<N;i++)s+=Math.hypot(xs[i]-xs[i-1],yy[i]-yy[i-1]);return s}
+function area(yy){let s=0;for(let i=1;i<N;i++)s+=(yy[i]+yy[i-1])/2*(xs[i]-xs[i-1]);return s}
+function grad(){
+ const g=new Array(N).fill(0), h=1e-5, L0=len(y);
+ for(let i=1;i<N-1;i++){
+  y[i]+=h;g[i]=(len(y)-L0)/h;y[i]-=h}
+ return g}
+function step(){const g=grad();for(let i=1;i<N-1;i++)y[i]-=0.02*g[i];
+ if(mode){ // project back onto the area constraint (uniform shift of interior nodes)
+  const c=(A-area(y))/(1-1/(N-1));
+  for(let i=1;i<N-1;i++)y[i]+=c}}
+function fitCircle(){ // through endpoints and apex
+ const apex=Math.max(...y), xm=xs[y.indexOf(apex)];
+ // circle through (0,0),(1,0),(xm,apex): center on x=0.5
+ if(apex<0.02)return null;
+ const yc=(apex*apex+ (xm-0.5)**2 -0.25)/(2*apex);
+ const R=Math.hypot(0.5,yc);
+ return{yc:-Math.abs(yc)>0?yc:yc,R, yc2:yc}}
+function draw(){
+ let s='';
+ for(const v of[0,0.3,0.6])s+=`<path d="M${X(0)} ${Y(v)}H${X(1)}" stroke="var(--border)" stroke-width="0.6"/><text x="${X(0)-8}" y="${Y(v)+4}" text-anchor="end" style="font-size:11px;fill:var(--text-muted)">${v}</text>`;
+ s+=`<path d="M${X(0)} ${Y(0)}H${X(1)}" stroke="var(--text-muted)" stroke-width="0.8"/>`;
+ if(mode){ // shaded area
+  let d=`M${X(0)} ${Y(0)}`;for(let i=0;i<N;i++)d+=`L${X(xs[i])} ${Y(y[i])}`;d+=`L${X(1)} ${Y(0)}Z`;
+  s+=`<path d="${d}" fill="${css('green')}" opacity="0.10"/>`;
+  // analytic optimum: circle arc with area 0.3 (R=0.51194, yc=-0.11009)
+  const R=0.51194,yc=-0.11009;let d2='';
+  for(let i=0;i<=80;i++){const xv=i/80;const yv=yc+Math.sqrt(Math.max(R*R-(xv-0.5)**2,0));d2+=(i?'L':'M')+X(xv).toFixed(1)+' '+Y(yv).toFixed(1)}
+  s+=`<path d="${d2}" stroke="${css('pink')}" stroke-width="1.6" stroke-dasharray="5 4" fill="none"/>`;
+  s+=`<text x="${X(0.86)}" y="${Y(0.33)}" style="font-size:11.5px;fill:${css('pink')}">target: circle arc</text>`}
+ else{
+  s+=`<path d="M${X(0)} ${Y(0)}L${X(1)} ${Y(0)}" stroke="${css('pink')}" stroke-width="1.6" stroke-dasharray="5 4"/>`;
+  s+=`<text x="${X(0.80)}" y="${Y(0)+18}" style="font-size:11.5px;fill:${css('pink')}">target: straight line</text>`}
+ let d=`M${X(xs[0])} ${Y(y[0])}`;for(let i=1;i<N;i++)d+=`L${X(xs[i])} ${Y(y[i])}`;
+ s+=`<path d="${d}" stroke="${css('blue')}" stroke-width="2.6" fill="none"/>`;
+ for(let i=1;i<N-1;i++)s+=`<circle cx="${X(xs[i])}" cy="${Y(y[i])}" r="4.5" fill="${css('blue')}" style="cursor:grab"/>`;
+ s+=`<circle cx="${X(0)}" cy="${Y(0)}" r="6" fill="${css('amber')}"/><circle cx="${X(1)}" cy="${Y(0)}" r="6" fill="${css('amber')}"/>`;
+ sv.innerHTML=s;
+ const Lv=len(y), av=area(y);
+ const tgt=mode?1.3867:1.0;
+ document.getElementById('out').innerHTML=
+  `L(y) = <b style="color:${css('blue')}">${Lv.toFixed(4)}</b> · optimum ${tgt.toFixed(4)}`+
+  (mode?` · area = <b style="color:${av>A-0.01&&av<A+0.01?'var(--text-success)':css('pink')}">${av.toFixed(3)}</b> (want ${A})`:'')+
+  (Math.abs(Lv-tgt)<0.003?` <span style="color:var(--text-success)">— at the Euler solution ✓</span>`:'');
+ document.getElementById('cap').textContent= mode?
+  'Relaxation = gradient descent on the functional L + μ(area − A)². The curve settles onto the dashed circle arc — Euler’s equation with a Lagrange multiplier, found by a dumb optimizer that was never told about circles. The multiplier λ₀ equals 1/R: more required area ⇒ smaller circle ⇒ more "tension".'
+  :'Drag the nodes, then press relax: gradient descent on the length functional. Whatever mess you draw, it settles onto the straight line — Euler’s equation F_y − d/dx F_y′ = 0 emerging from raw optimization. Every interior wiggle costs length and gets ironed out.'}
+function loop(){step();draw();run=requestAnimationFrame(loop)}
+document.querySelectorAll('[data-m]').forEach(b=>b.onclick=()=>{
+ document.querySelectorAll('[data-m]').forEach(z=>z.classList.toggle('on',z===b));
+ mode=+b.dataset.m;if(run){cancelAnimationFrame(run);run=null}seed();draw()});
+document.getElementById('relax').onclick=()=>{if(!run)loop()};
+document.getElementById('stop').onclick=()=>{if(run){cancelAnimationFrame(run);run=null}};
+document.getElementById('wig').onclick=()=>{if(run){cancelAnimationFrame(run);run=null}wiggle()};
+function pt(e){const r=sv.getBoundingClientRect();return[(e.clientX-r.left)*860/r.width,(e.clientY-r.top)*430/r.height]}
+sv.addEventListener('pointerdown',e=>{const[a,b]=pt(e);
+ for(let i=1;i<N-1;i++)if(Math.hypot(X(xs[i])-a,Y(y[i])-b)<15){drag=i;if(run){cancelAnimationFrame(run);run=null}sv.setPointerCapture(e.pointerId);return}});
+sv.addEventListener('pointermove',e=>{if(drag<0)return;const[a,b]=pt(e);
+ y[drag]=Math.max(YMIN,Math.min(YMAX,IY(b)));draw()});
+sv.addEventListener('pointerup',()=>drag=-1);
+seed();draw();
+const __post=()=>parent.postMessage({demoHeight:document.body.scrollHeight+8},'*');
+addEventListener('load',__post);new ResizeObserver(__post).observe(document.body);
+</script></body></html>
