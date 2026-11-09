@@ -1,0 +1,95 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>RRT Grower</title>
+<style>
+:root{--text-primary:#1f2937;--text-secondary:#4b5563;--text-muted:#9ca3af;--text-success:#15803d;--text-accent:#1d4ed8;--bg-accent:#dbeafe;--border:#e5e7eb;--border-strong:#cbd5e1;--border-accent:#93c5fd;--radius:8px;--bg:#fff;--card:#f9fafb;--blue:#378ADD;--pink:#D4537E;--green:#16a34a;--amber:#BA7517}
+@media (prefers-color-scheme:dark){:root{--text-primary:#e5e7eb;--text-secondary:#cbd5e1;--text-muted:#6b7280;--text-success:#4ade80;--text-accent:#93c5fd;--bg-accent:#1e3a8a;--border:#2f2f2f;--border-strong:#4b5563;--border-accent:#3b82f6;--bg:#191919;--card:#222;--blue:#60a5fa;--pink:#f472b6;--green:#4ade80;--amber:#fbbf24}}
+body{margin:0;padding:12px 16px;background:var(--bg);color:var(--text-primary);font:14px/1.5 -apple-system,Segoe UI,Helvetica,Arial,sans-serif;max-width:900px}
+.btns{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:6px}
+.btns button{font:inherit;font-size:13px;padding:4px 10px;border:0.5px solid var(--border-strong);border-radius:var(--radius);background:transparent;color:var(--text-primary);cursor:pointer}
+.btns button.on{background:var(--bg-accent);color:var(--text-accent);border-color:var(--border-accent)}
+.row{display:grid;grid-template-columns:200px 1fr 70px;gap:10px;align-items:center;margin:3px 0;font-size:13px}
+input[type=range]{width:100%}
+canvas{width:100%;height:auto;border-radius:10px;background:var(--card);display:block}
+#out{font-size:13.5px;margin-top:6px;font-variant-numeric:tabular-nums}
+#cap{font-size:13px;color:var(--text-secondary);margin-top:4px;line-height:1.55}
+</style></head><body>
+<div class="btns"><button data-p="0" class="on">narrow gap</button><button data-p="1">bug trap</button><button data-p="2">open space</button>
+<span style="flex:1"></span><button id="go">▶ grow</button><button id="st">1 step</button><button id="re">reset</button></div>
+<div class="row"><span>step size Δq</span><input type="range" id="dq" min="0.02" max="0.15" step="0.01" value="0.06"><b id="dqv"></b></div>
+<div class="row"><span>goal bias</span><input type="range" id="gb" min="0" max="0.5" step="0.05" value="0.05"><b id="gbv"></b></div>
+<canvas id="cv" width="860" height="480"></canvas>
+<div id="out"></div>
+<div id="cap"></div>
+<script>
+// RRT: sample, nearest, steer by dq, connect if collision-free.
+let preset=0,DQ=0.06,GB=0.05,anim=null,seed=7;
+function rnd(){seed=(seed*1664525+1013904223)>>>0;return seed/4294967296}
+const W=860,H=480;
+const cv=document.getElementById('cv'),g=cv.getContext('2d');
+const css=v=>getComputedStyle(document.documentElement).getPropertyValue(v).trim();
+let OBS=[],startP=[0.08,0.5],goalP=[0.92,0.5],V=[],E=[],found=null,iters=0,lastSample=null;
+function makeObs(){
+ if(preset===0)OBS=[[0.46,0.54,0,0.44],[0.46,0.54,0.56,1]];
+ else if(preset===1)OBS=[[0.25,0.6,0.25,0.3],[0.25,0.6,0.7,0.75],[0.55,0.6,0.3,0.7]];
+ else OBS=[[0.35,0.42,0.15,0.5],[0.6,0.67,0.5,0.85]];
+ }
+function free(p){return p[0]>=0&&p[0]<=1&&p[1]>=0&&p[1]<=1&&
+ !OBS.some(([a,b,c,d])=>p[0]>=a&&p[0]<=b&&p[1]>=c&&p[1]<=d)}
+function segFree(p,q){for(let t=0;t<=1;t+=0.05)if(!free([p[0]+t*(q[0]-p[0]),p[1]+t*(q[1]-p[1])]))return false;return true}
+function reset(){V=[startP.slice()];E=[];found=null;iters=0;lastSample=null;
+ if(anim){cancelAnimationFrame(anim);anim=null}draw()}
+function step(){
+ if(found)return false;
+ iters++;
+ const q=rnd()<GB?goalP:[rnd(),rnd()];
+ lastSample=q;
+ let bi=0,bd=1e9;
+ for(let i=0;i<V.length;i++){const d=Math.hypot(V[i][0]-q[0],V[i][1]-q[1]);if(d<bd){bd=d;bi=i}}
+ const n=Math.max(bd,1e-9);
+ const nw=[V[bi][0]+(q[0]-V[bi][0])/n*Math.min(DQ,n),V[bi][1]+(q[1]-V[bi][1])/n*Math.min(DQ,n)];
+ if(free(nw)&&segFree(V[bi],nw)){
+  V.push(nw);E.push([bi,V.length-1]);
+  if(Math.hypot(nw[0]-goalP[0],nw[1]-goalP[1])<0.05){
+   // trace path
+   const par={};E.forEach(([a,b])=>par[b]=a);
+   let p=[V.length-1];while(p[p.length-1]!==0)p.push(par[p[p.length-1]]);
+   found=p.reverse()}}
+ return true}
+function draw(){
+ g.clearRect(0,0,W,H);
+ g.fillStyle='#64748b';
+ for(const[a,b,c,d]of OBS)g.fillRect(a*W,c*H,(b-a)*W,(d-c)*H);
+ g.strokeStyle=css('--blue');g.globalAlpha=0.65;g.lineWidth=1.2;g.beginPath();
+ for(const[a,b]of E){g.moveTo(V[a][0]*W,V[a][1]*H);g.lineTo(V[b][0]*W,V[b][1]*H)}
+ g.stroke();g.globalAlpha=1;
+ if(lastSample&&!found){g.strokeStyle=css('--pink');g.beginPath();g.arc(lastSample[0]*W,lastSample[1]*H,5,0,7);g.stroke()}
+ if(found){g.strokeStyle=css('--green');g.lineWidth=3.5;g.beginPath();
+  found.forEach((vi,k)=>{k?g.lineTo(V[vi][0]*W,V[vi][1]*H):g.moveTo(V[vi][0]*W,V[vi][1]*H)});g.stroke();g.lineWidth=1}
+ g.fillStyle=css('--text-primary');g.beginPath();g.arc(startP[0]*W,startP[1]*H,7,0,7);g.fill();
+ g.fillStyle=css('--amber');g.beginPath();g.arc(goalP[0]*W,goalP[1]*H,7,0,7);g.fill();
+ document.getElementById('out').innerHTML=
+  `iterations: <b>${iters}</b> · tree size: <b style="color:${css('--blue')}">${V.length}</b>`+
+  (found?` · <b style="color:var(--text-success)">path found (${found.length} nodes) ✓</b>`:'');
+ document.getElementById('cap').textContent= preset===1?
+  'The bug trap: the start sits inside a cage with one mouth. Watch how long the tree takes to find the opening — random sampling has no idea the mouth matters (Voronoi bias eventually pushes it out). This is the worst case for RRTs and the motivation for smarter sampling.'
+  :'Each iteration: sample a random configuration (pink ring), find the NEAREST tree node, STEER Δq toward the sample, keep the new edge if collision-free. The tree is pulled toward big empty regions (Voronoi bias), which is what makes the exploration "rapid". Raise the goal bias and it beelines; raise Δq and it gets greedy but coarse.'}
+function loop(){let k=6;while(k-->0)step();draw();
+ if(!found&&iters<6000)anim=requestAnimationFrame(loop);else anim=null}
+document.querySelectorAll('[data-p]').forEach(b=>b.onclick=()=>{
+ document.querySelectorAll('[data-p]').forEach(z=>z.classList.toggle('on',z===b));
+ preset=+b.dataset.p;
+ startP=preset===1?[0.4,0.5]:[0.08,0.5];
+ makeObs();reset()});
+document.getElementById('go').onclick=()=>{if(!anim&&!found)loop()};
+document.getElementById('st').onclick=()=>{if(anim){cancelAnimationFrame(anim);anim=null}step();draw()};
+document.getElementById('re').onclick=()=>{seed=(seed*31+17)>>>0;reset()};
+document.getElementById('dq').oninput=e=>{DQ=+e.target.value;document.getElementById('dqv').textContent=DQ.toFixed(2);};
+document.getElementById('gb').oninput=e=>{GB=+e.target.value;document.getElementById('gbv').textContent=(100*GB).toFixed(0)+'%';};
+document.getElementById('dqv').textContent=DQ.toFixed(2);
+document.getElementById('gbv').textContent=(100*GB).toFixed(0)+'%';
+matchMedia('(prefers-color-scheme: dark)').addEventListener('change',draw);
+makeObs();reset();
+const __post=()=>parent.postMessage({demoHeight:document.body.scrollHeight+8},'*');
+addEventListener('load',__post);new ResizeObserver(__post).observe(document.body);
+</script></body></html>

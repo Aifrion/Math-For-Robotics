@@ -1,0 +1,126 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Planner Race</title>
+<style>
+:root{--text-primary:#1f2937;--text-secondary:#4b5563;--text-muted:#9ca3af;--text-success:#15803d;--text-accent:#1d4ed8;--bg-accent:#dbeafe;--border:#e5e7eb;--border-strong:#cbd5e1;--border-accent:#93c5fd;--radius:8px;--bg:#fff;--card:#f9fafb;--blue:#378ADD;--pink:#D4537E;--green:#16a34a;--amber:#BA7517}
+@media (prefers-color-scheme:dark){:root{--text-primary:#e5e7eb;--text-secondary:#cbd5e1;--text-muted:#6b7280;--text-success:#4ade80;--text-accent:#93c5fd;--bg-accent:#1e3a8a;--border:#2f2f2f;--border-strong:#4b5563;--border-accent:#3b82f6;--bg:#191919;--card:#222;--blue:#60a5fa;--pink:#f472b6;--green:#4ade80;--amber:#fbbf24}}
+body{margin:0;padding:12px 16px;background:var(--bg);color:var(--text-primary);font:14px/1.5 -apple-system,Segoe UI,Helvetica,Arial,sans-serif;max-width:900px}
+.btns{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:6px;align-items:center}
+.btns button{font:inherit;font-size:13px;padding:4px 10px;border:0.5px solid var(--border-strong);border-radius:var(--radius);background:transparent;color:var(--text-primary);cursor:pointer}
+.btns button.on{background:var(--bg-accent);color:var(--text-accent);border-color:var(--border-accent)}
+.btns span{font-size:13px;color:var(--text-secondary)}
+canvas{width:100%;height:auto;border-radius:10px;background:var(--card);display:block;touch-action:none}
+#out{font-size:13.5px;margin-top:6px;font-variant-numeric:tabular-nums}
+#cap{font-size:13px;color:var(--text-secondary);margin-top:4px;line-height:1.55}
+</style></head><body>
+<div class="btns"><span>algorithm:</span>
+<button data-a="0">BFS / Dijkstra</button><button data-a="1" class="on">A*</button><button data-a="2">greedy best-first</button>
+<span style="margin-left:10px">brush:</span>
+<button data-b="0" class="on">wall</button><button data-b="1">mud (5×)</button><button data-b="2">erase</button>
+<span style="flex:1"></span><button id="go">▶ search</button><button id="clr">clear map</button></div>
+<canvas id="cv" width="860" height="480"></canvas>
+<div id="out"></div>
+<div id="cap"></div>
+<script>
+// Grid search race: watch the expansion wave, count expansions, compare costs.
+const CW=43,CH=24,cell=20;
+let wall=new Uint8Array(CW*CH), mudm=new Uint8Array(CW*CH);
+let algo=1,brush=0,drag=false,anim=null;
+let start=[20,3],goal=[20,39];
+const cv=document.getElementById('cv'),g=cv.getContext('2d');
+const css=v=>getComputedStyle(document.documentElement).getPropertyValue(v).trim();
+function preset(){wall.fill(0);mudm.fill(0);
+ for(let i=4;i<20;i++)wall[i*CW+19]=1;          // wall: pass above (top) or below
+ for(let j=16;j<29;j++)for(let i=20;i<24;i++)mudm[i*CW+j]=1;} // bottom corridor is mud
+function idx(i,j){return i*CW+j}
+let state=null;
+function startSearch(){
+ if(anim){cancelAnimationFrame(anim);anim=null}
+ const gc=new Float64Array(CW*CH).fill(Infinity);
+ gc[idx(...start)]=0;
+ state={gc,prev:new Int32Array(CW*CH).fill(-1),done:new Uint8Array(CW*CH),
+  pq:[[prio(0,start),0,start]],expanded:0,found:false,path:null};
+ step()}
+function prio(gv,c){
+ const h=Math.hypot(c[0]-goal[0],c[1]-goal[1]);
+ return algo===0?gv:algo===1?gv+h:h}
+function step(){
+ const s=state;let budget=14;
+ while(budget-->0&&s.pq.length&&!s.found){
+  s.pq.sort((a,b)=>a[0]-b[0]);
+  const[_,gv,c]=s.pq.shift();
+  const ci=idx(...c);
+  if(s.done[ci])continue;
+  s.done[ci]=1;s.expanded++;
+  if(c[0]===goal[0]&&c[1]===goal[1]){s.found=true;break}
+  for(const d of[[1,0],[-1,0],[0,1],[0,-1]]){
+   const ni=c[0]+d[0],nj=c[1]+d[1];
+   if(ni<0||nj<0||ni>=CH||nj>=CW||wall[idx(ni,nj)])continue;
+   const w=mudm[idx(ni,nj)]?5:1;
+   const ng=s.gc[ci]+w;
+   if(ng<s.gc[idx(ni,nj)]){s.gc[idx(ni,nj)]=ng;s.prev[idx(ni,nj)]=ci;
+    s.pq.push([prio(ng,[ni,nj]),ng,[ni,nj]])}}}
+ if(s.found&&!s.path){const p=[idx(...goal)];
+  while(p[p.length-1]!==idx(...start)&&s.prev[p[p.length-1]]>=0)p.push(s.prev[p[p.length-1]]);
+  s.path=p;
+  // true cost of the returned path
+  s.cost=0;for(const ci of p)if(ci!==idx(...start))s.cost+=mudm[ci]?5:1}
+ draw();
+ if(!s.found&&s.pq.length)anim=requestAnimationFrame(step);else anim=null}
+function draw(){
+ g.clearRect(0,0,860,480);
+ for(let i=0;i<CH;i++)for(let j=0;j<CW;j++){
+  const x=j*cell,y=i*cell,ci=idx(i,j);
+  if(wall[ci]){g.fillStyle=css('--text-primary');g.fillRect(x,y,cell-1,cell-1)}
+  else{
+   if(mudm[ci]){g.fillStyle=css('--amber');g.globalAlpha=0.3;g.fillRect(x,y,cell-1,cell-1);g.globalAlpha=1}
+   if(state&&state.done[ci]){g.fillStyle=css('--blue');g.globalAlpha=0.3;g.fillRect(x,y,cell-1,cell-1);g.globalAlpha=1}}}
+ if(state&&state.path){g.strokeStyle=css('--green');g.lineWidth=3;g.beginPath();
+  state.path.forEach((ci,k)=>{const i=Math.floor(ci/CW),j=ci%CW;
+   k?g.lineTo(j*cell+cell/2,i*cell+cell/2):g.moveTo(j*cell+cell/2,i*cell+cell/2)});
+  g.stroke();g.lineWidth=1}
+ g.fillStyle=css('--text-primary');g.beginPath();g.arc(start[1]*cell+cell/2,start[0]*cell+cell/2,6,0,7);g.fill();
+ g.fillStyle=css('--amber');g.beginPath();g.arc(goal[1]*cell+cell/2,goal[0]*cell+cell/2,6,0,7);g.fill();
+ const names=['Dijkstra (h = 0)','A* (f = g + h)','greedy (f = h)'];
+ document.getElementById('out').innerHTML= state?
+  `${names[algo]}: <b style="color:${css('--blue')}">${state.expanded}</b> cells expanded`+
+  (state.path?` · path cost <b style="color:${state.cost<=bestCost()?'var(--text-success)':css('--pink')}">${state.cost}</b>${state.cost<=bestCost()?' (optimal ✓)':' — suboptimal! optimum is '+bestCost()}`:
+   state.pq&&!state.pq.length&&!state.found?' · <b style="color:'+css('--pink')+'">no path exists</b>':' · searching…')
+  :'draw walls and mud, then press ▶ search';
+ document.getElementById('cap').textContent='Blue = everything the algorithm had to look at. Dijkstra ripples uniformly (optimal, expensive). A* leans toward the goal and keeps the SAME optimal cost — the admissible heuristic only prunes. Greedy sprints straight at the goal and will happily pay 5× crossing mud: fast answers, no guarantee. Paint your own trap and race them.'}
+function bestCost(){ // run silent Dijkstra for the true optimum
+ const gc=new Float64Array(CW*CH).fill(Infinity);gc[idx(...start)]=0;
+ const pq=[[0,start]];const done=new Uint8Array(CW*CH);
+ while(pq.length){pq.sort((a,b)=>a[0]-b[0]);const[gv,c]=pq.shift();
+  const ci=idx(...c);if(done[ci])continue;done[ci]=1;
+  if(c[0]===goal[0]&&c[1]===goal[1])return gv;
+  for(const d of[[1,0],[-1,0],[0,1],[0,-1]]){
+   const ni=c[0]+d[0],nj=c[1]+d[1];
+   if(ni<0||nj<0||ni>=CH||nj>=CW||wall[idx(ni,nj)])continue;
+   const ng=gv+(mudm[idx(ni,nj)]?5:1);
+   if(ng<gc[idx(ni,nj)]){gc[idx(ni,nj)]=ng;pq.push([ng,[ni,nj]])}}}
+ return Infinity}
+function paint(e){
+ const r=cv.getBoundingClientRect();
+ const j=Math.floor((e.clientX-r.left)*860/r.width/cell), i=Math.floor((e.clientY-r.top)*480/r.height/cell);
+ if(i<0||j<0||i>=CH||j>=CW)return;
+ if((i===start[0]&&j===start[1])||(i===goal[0]&&j===goal[1]))return;
+ const ci=idx(i,j);
+ if(brush===0){wall[ci]=1;mudm[ci]=0}
+ else if(brush===1){mudm[ci]=1;wall[ci]=0}
+ else{wall[ci]=0;mudm[ci]=0}
+ state=null;draw()}
+cv.addEventListener('pointerdown',e=>{drag=true;cv.setPointerCapture(e.pointerId);paint(e)});
+cv.addEventListener('pointermove',e=>{if(drag)paint(e)});
+addEventListener('pointerup',()=>drag=false);
+document.querySelectorAll('[data-a]').forEach(b=>b.onclick=()=>{
+ document.querySelectorAll('[data-a]').forEach(z=>z.classList.toggle('on',z===b));algo=+b.dataset.a;startSearch()});
+document.querySelectorAll('[data-b]').forEach(b=>b.onclick=()=>{
+ document.querySelectorAll('[data-b]').forEach(z=>z.classList.toggle('on',z===b));brush=+b.dataset.b});
+document.getElementById('go').onclick=startSearch;
+document.getElementById('clr').onclick=()=>{wall.fill(0);mudm.fill(0);state=null;draw()};
+matchMedia('(prefers-color-scheme: dark)').addEventListener('change',draw);
+preset();startSearch();
+const __post=()=>parent.postMessage({demoHeight:document.body.scrollHeight+8},'*');
+addEventListener('load',__post);new ResizeObserver(__post).observe(document.body);
+</script></body></html>

@@ -1,0 +1,204 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Lecture 13 — Robot Planning Algorithms | Math for Robotics</title>
+<link rel="stylesheet" href="assets/site.css">
+<link rel="stylesheet" href="vendor/katex/katex.min.css">
+<script defer src="vendor/katex/katex.min.js"></script>
+<script defer src="vendor/katex/auto-render.min.js"></script>
+<script defer src="assets/site.js"></script>
+</head><body>
+<div class="layout">
+<main><div class="content">
+
+<h1>Lecture 13: Robot Planning Algorithms</h1>
+
+<div class="callout summary"><span class="tag">The one-sentence version:</span>
+Lecture 12 built the space; this lecture searches it — discretize \(C_{free}\) into a graph
+(grids, roadmaps, cells) or sample it lazily (PRM, RRT), then let graph search (Dijkstra, A*) do
+what graph search does, with completeness and optimality traded explicitly for speed.
+<br><span class="small muted">CSE 276C, Lecture 13 · A. E. Frank &amp; H. I. Christensen · LaValle,
+<em>Planning Algorithms</em>. All numbers verified in <code>scripts/lec13/verify.py</code>.</span></div>
+
+<div class="toc"><b>Contents</b><ol>
+<li><a href="#tax">A taxonomy of planning problems</a></li>
+<li><a href="#roadmap">Roadmaps: planning becomes graph search</a></li>
+<li><a href="#grids">Occupancy grids &amp; resolution</a></li>
+<li><a href="#geom">Geometric roadmaps</a></li>
+<li><a href="#sampling">Sampling-based planning</a></li>
+<li><a href="#rrt">RRT: the single-query workhorse</a></li>
+<li><a href="#sample-theory">Sampling theory: what "random" costs</a></li>
+<li><a href="#search">Graph search: BFS → Dijkstra → A*</a></li>
+<li><a href="#policy">Policies: navigation functions &amp; wavefronts</a></li>
+<li><a href="#task">Task planning: STRIPS in one breath</a></li>
+<li><a href="#summary">Summary</a></li>
+</ol></div>
+
+<h2 id="big">The big picture</h2>
+<p>Everything here is one pipeline: <b>represent</b> free space discretely → <b>search</b> the
+resulting graph → (optionally) <b>precompute a policy</b> so one search answers every future
+query. The art is in what each representation gives up:</p>
+<table>
+<tr><th>approach</th><th>guarantee</th><th>pays with</th></tr>
+<tr><td>occupancy grid</td><td>resolution-complete</td><td>memory explodes with dimension &amp; resolution</td></tr>
+<tr><td>geometric roadmaps (visibility, Voronoi, cells)</td><td>complete (exact)</td><td>combinatorial complexity; needs exact geometry</td></tr>
+<tr><td>sampling (PRM / RRT)</td><td><em>probabilistically</em> complete</td><td>no "no-path" answer; path quality varies</td></tr>
+<tr><td>graph search (Dijkstra / A*)</td><td>optimal on the graph</td><td>expansions; A* needs an admissible h</td></tr>
+<tr><td>navigation function / wavefront</td><td>policy from <em>everywhere</em>, no local minima</td><td>grid-wide computation per goal</td></tr>
+</table>
+
+<h2 id="tax">1 · A taxonomy of planning problems</h2>
+<p>The lecture's opening checklist — know which problem you actually have before picking a tool:
+<b>discrete vs continuous</b> state, <b>deterministic vs stochastic</b> outcomes, <b>static vs
+dynamic</b> world, <b>fully vs partially observable</b>, <b>offline vs online</b>, and (motion
+planning only) <b>kinematic vs differential</b> constraints. Shared vocabulary across all of them:
+state, actions, order, goal, and a <em>criterion</em> — feasible ("any path") vs optimal
+("shortest / max clearance"), which changes the right algorithm. This lecture: continuous,
+deterministic, static, fully observable, offline, kinematic.</p>
+
+<h2 id="roadmap">2 · Roadmaps: planning becomes graph search</h2>
+<p>A <b>roadmap</b> is a graph whose nodes are points of \(C_{free}\) and whose edges are simple
+free paths, with two promises: <b>accessibility</b> (any free configuration can easily reach the
+roadmap) and <b>connectivity-preservation</b> (the roadmap connects q₁ and q₂ iff \(C_{free}\)
+does). Build it once, <em>agnostic of start and goal</em> — then every query is: connect q_I and
+q_G to the map, search the graph. The preprocessing/query split is the economics of the whole
+lecture.</p>
+
+<h2 id="grids">3 · Occupancy grids &amp; resolution</h2>
+<p>The simplest roadmap: cover C-space with cells, mark any cell touching an obstacle blocked
+(conservative), connect free neighbors. Verified failure mode: a corridor of width 0.08 —
+a 10×10 grid (cell 0.1) blocks it entirely, <b>no path</b>; the 40×40 grid finds one (38 steps).
+If refining the grid indefinitely would eventually find any existing path, the method is
+<b>resolution-complete</b> — the guarantee is real but priced in memory: halving the cell size
+multiplies cells by 2ᵈⁱᵐ. Quadtrees (adaptive grids) recover most of the cost by zooming in only
+where cells are partially occupied.</p>
+
+<h2 id="geom">4 · Geometric roadmaps</h2>
+<table>
+<tr><th>roadmap</th><th>optimizes</th><th>robot flavor</th></tr>
+<tr><td>visibility / shortest-path map</td><td>path length — hugs obstacle corners (reflex vertices + bitangents)</td><td>minimal distance; zero clearance</td></tr>
+<tr><td>Voronoi / max-clearance map</td><td>stays equidistant from obstacles</td><td>mobile robots with localization noise</td></tr>
+<tr><td>cell decomposition (trapezoidal)</td><td>completeness with simple pieces: split C_free into convex cells, connect cell–boundary–cell</td><td>the textbook exact method</td></tr>
+</table>
+<p class="small muted">All exact, all complete — and all crushed by the <b>curse of combinatorial
+complexity</b>: non-convex shapes decompose into many pieces, rotations make facets explode
+(&gt;70 for a toy case), and Canny's general roadmap is exponential and essentially never
+implemented. Which is why the field went sampling.</p>
+
+<h2 id="sampling">5 · Sampling-based planning</h2>
+<p>Abandon <em>describing</em> \(C_{free}\); keep only a <b>collision checker</b> as a black box
+("is q free?") and reveal the space by querying it. Don't compute more than you have to. Two
+regimes:</p>
+<table>
+<tr><th>single-query (RRT)</th><th>multi-query (PRM)</th></tr>
+<tr><td>no precomputation pays off; grow a tree from this start toward this goal</td><td>front-load a roadmap of random samples + local connections; answer many queries fast</td></tr>
+</table>
+<p>The price of sampling: classical completeness is impossible (you can't exhaustively sample an
+uncountable set), so it weakens to <b>probabilistic completeness</b> — if a path exists, the
+probability of finding it → 1 as samples → ∞; if none exists, the planner may run forever. No
+"no-path" certificates.</p>
+
+<h2 id="rrt">6 · RRT: the single-query workhorse</h2>
+<p>The loop, exactly as the walkthrough slides: <b>sample</b> \(q_{rand}\) → <b>nearest</b> tree
+vertex \(q_{near}\) → <b>steer</b> a step Δq toward the sample → <b>connect</b> if the edge is
+collision-free → repeat. The tree gets pulled toward large unexplored regions (each sample is most
+likely to land in the biggest empty Voronoi cell of the current vertices) — that's the
+"rapidly-exploring". Verified: through a narrow gap, 10/10 seeded runs succeed, median 65
+iterations.</p>
+<p>🕹️ <b>Try it:</b> watch the Voronoi bias work, then give it the bug trap:</p>
+<div class="demo-wrap"><iframe class="demo" src="demos/lec13/rrt_grow.html" height="700" title="RRT grower"></iframe></div>
+
+<h2 id="sample-theory">7 · Sampling theory: what "random" costs</h2>
+<ul>
+<li><b>Denseness:</b> the sample sequence must get arbitrarily close to every point — random
+sequences are only <em>probably</em> dense.</li>
+<li><b>Uniformity on the right space:</b> sampling Euler angles uniformly does <b>not</b> give
+uniform rotations — it piles up at the poles. The slides' quaternion recipe
+\(h = (\sqrt{1-u_1}\sin 2\pi u_2,\ \sqrt{1-u_1}\cos 2\pi u_2,\ \sqrt{u_1}\sin 2\pi u_3,\ \sqrt{u_1}\cos 2\pi u_3)\)
+is exactly uniform — verified: rotating a fixed vector gives z with mean −0.0006 and variance
+0.3334 (uniform sphere: 0 and 1/3), while naive Euler sampling gives variance 0.252 — measurably
+biased.</li>
+<li><b>Dispersion:</b> the largest empty ball among your samples. 196 random points: 0.160;
+a 14×14 Sukharev grid: 0.051 (= half the cell diagonal, verified). Low-dispersion and
+low-discrepancy sequences (Halton, lattices) "fail randomness tests" and that's fine — planners
+care about the biggest hole, not statistics.</li>
+</ul>
+<figure><img src="figures/lec13/03_dispersion.svg" alt="Random vs grid dispersion" width="860">
+<figcaption>Fig 1 — same budget of 196 samples; dashed circle = the largest region each leaves unexplored.</figcaption></figure>
+
+<h2 id="search">8 · Graph search: BFS → Dijkstra → A*</h2>
+<p>Once anything above hands you a graph, search it <em>systematically</em>. BFS (FIFO) finds
+fewest-edges paths and is always systematic; DFS (LIFO) is cheap but only systematic on finite
+spaces; iterative deepening gets DFS's memory with BFS's guarantee. With edge weights
+(path length, terrain difficulty):</p>
+$$\text{Dijkstra: expand by } g(n) \text{ (cost-to-come)} \qquad
+\text{A*: expand by } f(n) = g(n) + h(n), \quad h \le h^* \text{ (admissible)}$$
+<p>Verified on one 60×60 map with a wall and a 5×-cost mud region:</p>
+<table>
+<tr><th>search</th><th>expansions</th><th>path cost</th><th>verdict</th></tr>
+<tr><td>Dijkstra</td><td>3149</td><td>82</td><td>optimal, uninformed</td></tr>
+<tr><td>A*, Euclidean h</td><td>1825</td><td><b>82</b></td><td>optimal, 1.7× cheaper — admissibility means the heuristic only <em>prunes</em></td></tr>
+<tr><td>greedy best-first (f = h)</td><td>152</td><td><b>132</b></td><td>20× cheaper, 61% over cost — it ignores g and plows through the mud</td></tr>
+<tr><td>weighted A* (f = g + 3h)</td><td>340</td><td>82</td><td>fast and <em>happened</em> to be optimal — inadmissible h voids the guarantee, it doesn't always break the result</td></tr>
+</table>
+<figure><img src="figures/lec13/01_search_race.svg" alt="Dijkstra vs A* vs greedy expansions" width="860">
+<figcaption>Fig 2 — blue = expanded cells on the same map. The lecture's caution about potential functions as heuristics is this row three: squared-distance h overestimates → A* drifts toward greedy.</figcaption></figure>
+<p>🕹️ <b>Try it:</b> paint walls and mud, then race the three searches:</p>
+<div class="demo-wrap"><iframe class="demo" src="demos/lec13/planner_race.html" height="660" title="Planner race"></iframe></div>
+
+<h2 id="policy">9 · Policies: navigation functions &amp; wavefronts</h2>
+<p>A path answers one query; a <b>policy</b> π maps <em>every</em> state to an action — the robot
+recovers from any perturbation by just looking up its cell. The clean construction: run
+Dijkstra/BFS <b>backward from the goal</b>; the cost-to-go φ is a <b>navigation function</b>:
+φ(goal) = 0, and from every reachable cell some neighbor strictly decreases φ. Verified on our
+map: zero local minima, and greedy descent from the start reaches the goal in exactly φ(start) =
+80 steps. Contrast the physics-inspired <b>potential field</b> (attractive goal + repulsive
+obstacles): elegant, local, cheap — and verified to jam in a U-shaped trap after 23 steps, at a
+local minimum that is not the goal. Unit-cost wavefront propagation is the parallelizable version
+(the slides' numbered-grid example), and the same ripple run from obstacle boundaries gives
+max-clearance maps.</p>
+<figure><img src="figures/lec13/02_wavefront.svg" alt="Wavefront navigation function" width="860">
+<figcaption>Fig 3 — cost-to-go from a backward BFS. Descending φ greedily from anywhere reaches the goal: a controller, not just a path.</figcaption></figure>
+
+<h2 id="task">10 · Task planning: STRIPS in one breath</h2>
+<p>Above motion planning sits "make me a coffee": abstract states, discrete actions. A discrete
+planning domain is \((\mathcal S, \mathcal A, f)\) with transition \(s' = f(s, a)\); a problem
+adds \(s_I\) and a goal set — and a <b>plan is literally a path</b> in the state-transition graph,
+searched with the exact algorithms of §8. Logic-based (STRIPS) representations compress the state
+space: instances, predicates, and operators with preconditions/effects encode \(2^{|P|\,|I|^k}\)
+states implicitly (10 ground predicates = 2¹⁰ states). Task planner proposes a skeleton; motion
+planner (this lecture) fills in the trajectories.</p>
+
+<h2 id="summary">11 · Summary</h2>
+<ul>
+<li>Classify the problem first (discrete/continuous, deterministic/stochastic, …) — the labels pick the algorithm family.</li>
+<li>Roadmaps turn continuous planning into graph search; build once, query many times.</li>
+<li>Grids are resolution-complete and memory-hungry (verified: a 0.08 gap needs finer than 0.1 cells); exact geometric roadmaps are complete and combinatorially doomed.</li>
+<li>Sampling trades certificates for scalability: probabilistic completeness, black-box collision checking, RRT's Voronoi-bias exploration.</li>
+<li>Sample on the right manifold (quaternion recipe for SO(3) — Euler sampling is measurably biased) and mind dispersion, not randomness aesthetics.</li>
+<li>A* with admissible h = Dijkstra's optimality at a fraction of the expansions (1825 vs 3149); greedy and inflated heuristics buy speed with the guarantee.</li>
+<li>Backward search from the goal upgrades a path to a policy — navigation functions have no local minima; ad-hoc potential fields do.</li>
+</ul>
+
+<details><summary>⚠️ Typos in the slides to watch out for</summary><div class="body"><ul>
+<li>Sampling-uniformity slide: "the probability density function is consistent <b>the</b> Haar measure" → consistent <b>with</b> the Haar measure.</li>
+<li>Taxonomy slide: "Partial <b>Observability</b>" is paired with "Fully <b>Observable</b>" — mixed noun/adjective; read both as observability classes. Also "Sometimes this can refer <b>if</b> a plan is…" → refer <b>to whether</b>.</li>
+<li>Shared-concepts slide: "states and actions occur in a <b>set, monotonic</b> order" → read "fixed, monotonic".</li>
+<li>Task-planning slide: "A discrete <b>planing</b> problem" → planning.</li>
+<li>RRT pseudocode slide: line 5 reads <code>G.add_edge(q_near, q_rand)</code> — with the steer step of the walkthrough it should add (q_near, q_<b>new</b>); as printed it skips the Δq clamp.</li>
+</ul></div></details>
+
+<details><summary>🧠 Self-check questions</summary><div class="body">
+<details><summary>1 · Your coarse grid says "no path". What exactly do you know, and what don't you?</summary><div class="body">You know no path exists <em>at this resolution with conservative cell-blocking</em> — nothing more. Our verified example: a 0.08 corridor vanishes on a 0.1 grid and reappears at 0.025. Resolution-completeness only promises the truth in the limit; a coarse "no" is not a certificate (and a sampling planner can't even say "no").</div></details>
+<details><summary>2 · When is a PRM worth its preprocessing and when is an RRT the right call?</summary><div class="body">PRM: many queries in the same unchanging C-space (same robot, same shelf) — front-load the roadmap, answer queries in milliseconds. RRT: one-off queries, changing worlds, or when you only ever care about this start/goal pair. The slides' "two dominating approaches" is exactly this precomputation-economics split.</div></details>
+<details><summary>3 · Why does uniform Euler-angle sampling break a 6-DOF PRM, and what's the fix?</summary><div class="body">It samples SO(3) non-uniformly (pole bias — verified var 0.25 vs 1/3), so whole orientation regions get starved of samples and connections there are never attempted. Fix: the quaternion recipe h(u₁,u₂,u₃), which is Haar-uniform, or low-dispersion deterministic sequences on the right manifold.</div></details>
+<details><summary>4 · A* with h = 0, h = Euclidean, h = 3×Euclidean: rank them and name the guarantees.</summary><div class="body">h = 0 is Dijkstra: optimal, most expansions (3149). Euclidean is admissible: optimal, fewer expansions (1825). 3× overestimates: fewest expansions (340) but only "no worse than Dijkstra found" by luck — the optimality proof needs h ≤ h*. Our run happened to return 82; the theory says it needn't.</div></details>
+<details><summary>5 · Your robot gets pushed off its planned path constantly. Path or policy — and which construction?</summary><div class="body">Policy: a navigation function. Run Dijkstra/wavefront backward from the goal once; after any shove, descend φ from wherever you are. Verified property that makes it safe: no local minima (an ad-hoc potential field jammed after 23 steps on the same kind of map).</div></details>
+<details><summary>6 · The RRT in the bug trap takes 5× longer than through the narrow gap. Why — and what does goal bias do about it?</summary><div class="body">Nearly all of C-space's volume (and so nearly all samples) is outside the trap, but progress requires the rare samples that pull the tree through the mouth — Voronoi bias helps explore, not escape designed concavities. Goal bias doesn't help here (the goal is outside, pulling against the mouth); smarter sampling (bridge tests, workspace guidance) is the research answer.</div></details>
+</div></details>
+
+<div class="prevnext"><a href="lec12.html">← Lecture 12: Configuration Space</a><span class="muted">Lecture 14: Differential Geometry (soon)</span></div>
+
+</div></main>
+</div>
+</body></html>

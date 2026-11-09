@@ -16,7 +16,7 @@
     { href: 'lec10.html', title: '10 · Spectral Analysis' },
     { href: 'lec11.html', title: '11 · Regression & Classification' },
     { href: 'lec12.html', title: '12 · Configuration Space' },
-    { href: 'lec13.html', title: '13 · Planning Algorithms', soon: true },
+    { href: 'lec13.html', title: '13 · Planning Algorithms' },
     { href: 'lec14.html', title: '14 · Differential Geometry', soon: true },
     { group: 'Homework' },
     { href: 'hw2.html', title: 'HW2 · Trajectory Interpolation' },
