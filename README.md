@@ -29,7 +29,14 @@ Other ways to view it:
 | `docs/lec6.html` | Optimization: golden section, simplex, Powell, CG, annealing, DP |
 | `docs/lec7.html` | Integration & ODEs: trapezoid → Romberg, RK4, Bulirsch–Stoer, stiffness |
 | `docs/lec8.html` | Subspace methods: PCA, LDA/Fisherfaces, CCA, ICA |
+| `docs/lec9.html` | Calculus of variations: functionals, Euler's equation, constrained curves |
+| `docs/lec10.html` | Spectral analysis: autocorrelation, PSD, Nyquist, FFT, leakage, wavelets |
+| `docs/lec11.html` | Regression & classification: basis models, Bayesian fitting, Fisher, perceptrons |
+| `docs/lec12.html` | Configuration space: C-obstacles, Minkowski sums, tori & manifolds |
+| `docs/lec13.html` | Planning algorithms: roadmaps, RRTs, Dijkstra/A*, navigation functions |
+| `docs/lec14.html` | Differential geometry: Frenet frame, Lie brackets & parallel parking |
 | `docs/hw2.html` | HW2 companion: trajectory reconstruction by interpolation + cos-table design |
+| `docs/hw3.html` | HW3 companion: ODE to a singularity (Euler/RK4/Richardson) + RANSAC plane fitting |
 
 - `docs/demos/<lecture>/` — standalone interactive demos (no build step, no libraries)
 - `docs/figures/<lecture>/` — compact SVG figures
