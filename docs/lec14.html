@@ -1,0 +1,194 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Lecture 14 — Differential Geometry | Math for Robotics</title>
+<link rel="stylesheet" href="assets/site.css">
+<link rel="stylesheet" href="vendor/katex/katex.min.css">
+<script defer src="vendor/katex/katex.min.js"></script>
+<script defer src="vendor/katex/auto-render.min.js"></script>
+<script defer src="assets/site.js"></script>
+</head><body>
+<div class="layout">
+<main><div class="content">
+
+<h1>Lecture 14: Differential Geometry</h1>
+
+<div class="callout summary"><span class="tag">The one-sentence version:</span>
+The course's finale gives curves and curved spaces their own calculus: arc length makes speed
+honest, the Frenet frame (T, N, B) rides along any path reporting curvature and torsion, and the
+Lie bracket explains the deepest trick in robotics — how a car that cannot slide sideways parks
+sideways anyway.
+<br><span class="small muted">CSE 276C, Lecture 14 · Prof. Henrik Christensen · do Carmo /
+O'Neill. All numbers verified in <code>scripts/lec14/verify.py</code>.</span></div>
+
+<div class="toc"><b>Contents</b><ol>
+<li><a href="#curves">Curves, traces, parameterizations</a></li>
+<li><a href="#arclen">Arc length &amp; unit speed</a></li>
+<li><a href="#curv">Curvature</a></li>
+<li><a href="#frenet">The Frenet frame &amp; its formulas</a></li>
+<li><a href="#helix">Worked fully: the helix</a></li>
+<li><a href="#cov">Covariant derivatives</a></li>
+<li><a href="#lie">The Lie bracket &amp; parallel parking</a></li>
+<li><a href="#manifolds">Manifolds, charts, diffeomorphisms</a></li>
+<li><a href="#summary">Summary</a></li>
+</ol></div>
+
+<h2 id="big">The big picture</h2>
+<p>Lecture 12 said C-spaces are manifolds; this lecture supplies the calculus that lives on them.
+Two storylines: <b>along a curve</b> (velocity → arc length → curvature → the moving Frenet frame)
+and <b>across vector fields</b> (covariant derivative → Lie bracket → why nonholonomic robots can
+still go everywhere). Both end in robot facts you can verify with numbers.</p>
+<table>
+<tr><th>robotics problem</th><th>differential-geometry tool</th></tr>
+<tr><td>how sharply can the path turn at this speed?</td><td>curvature K, radius R = 1/K</td></tr>
+<tr><td>jerk-free road/path design</td><td>clothoids: K(s) linear in s</td></tr>
+<tr><td>attach a tool frame that follows a weld seam</td><td>the Frenet frame (T, N, B)</td></tr>
+<tr><td>parallel parking a nonholonomic car</td><td>the Lie bracket of control fields</td></tr>
+<tr><td>orientations, poses, Gaussians as "spaces"</td><td>manifolds and charts</td></tr>
+</table>
+
+<h2 id="curves">1 · Curves, traces, parameterizations</h2>
+<p>A curve is a map \(\alpha : I \to \mathbb R^3\), \(\alpha(t) = (x(t), y(t), z(t))\), smooth
+(all derivatives exist). Distinguish the <em>curve</em> (the map, with its timing) from its
+<em>trace</em> (the set of points): \((r\cos\theta, r\sin\theta)\) on \([0, 2\pi]\) and
+\((r\cos 2\theta, r\sin 2\theta)\) on \([0, \pi]\) draw the same circle at different speeds —
+same trace, different curves. For robots: the <em>path</em> is the trace; the <em>trajectory</em>
+is the curve.</p>
+
+<h2 id="arclen">2 · Arc length &amp; unit speed</h2>
+$$v(t) = \lVert \alpha'(t) \rVert, \qquad s(t) = \int_{t_0}^{t} v(\tau)\, d\tau$$
+<p>Re-parameterize by s and the curve runs at unit speed — β(s) with \(\lVert\beta'\rVert = 1\) —
+which makes every later formula clean: geometry stops being entangled with how fast you happened
+to drive. (Fine print the slides enjoy: not every curve has finite arc length — the Koch
+snowflake's perimeter diverges. Robot paths are tamer.)</p>
+
+<h2 id="curv">3 · Curvature</h2>
+$$K(s) = \lVert \beta''(s) \rVert, \qquad R(s) = \frac{1}{K(s)}$$
+<p>At unit speed, the second derivative can't change the speed — only the <em>direction</em> — so
+its size is pure turning rate. Verified anchors: a line has K = 0; a circle of radius a has
+K = 1/a everywhere; the <b>clothoid</b> (Cornu spiral) has K(s) = s — curvature growing linearly
+with distance, i.e. a steering wheel turned at constant rate, which is why roads, rail
+transitions, and robot path smoothers use it (K never jumps ⟹ lateral acceleration never jumps).
+All three verified numerically.</p>
+<p>🕹️ <b>Try it:</b> ride four curves at unit speed and watch the osculating circle breathe:</p>
+<div class="demo-wrap"><iframe class="demo" src="demos/lec14/frenet_ride.html" height="620" title="Frenet ride"></iframe></div>
+
+<h2 id="frenet">4 · The Frenet frame &amp; its formulas</h2>
+<p>At each point of a unit-speed curve, build an orthonormal frame out of the motion itself:</p>
+$$T = \beta' \ \ (\text{tangent}), \qquad
+N = \frac{T'}{\lVert T'\rVert} \ \ (\text{normal — toward the bend}), \qquad
+B = T \times N \ \ (\text{binormal})$$
+<p>T and N span the <b>osculating plane</b> (the plane the curve locally lives in); B is its
+normal. Two scalars drive everything: curvature \(K = \lVert T' \rVert\) and <b>torsion</b>
+\(\tau = -B'\cdot N\), which measures how fast the curve twists <em>out of</em> the osculating
+plane. The frame's evolution is the <b>Frenet formulas</b>:</p>
+$$T' = K N, \qquad N' = -K\,T + \tau B, \qquad B' = -\tau N$$
+<p class="small muted">The derivation is three applications of one lemma: if \(f\cdot g\) is
+constant then \(f'\cdot g = -f\cdot g'\) (so any unit field is ⊥ its own derivative). Curvature
+is always ≥ 0; torsion is signed; neither depends on the parameterization.</p>
+<div class="callout gotcha"><span class="tag">⚠️ Sign check (slide typo):</span> the N′ slide and
+the matrix form print \(N' = +K\,T + \tau B\) (matrix entry (1,2) = +K). The minus sign is
+required: verified on the helix, \(N' + KT - \tau B = 0\) to 10⁻¹⁰ while the printed version
+misses by exactly \(2K\). (The slides' own derivation agrees: from \(N'\cdot T = -N\cdot T' = -K\)
+the T-component of N′ must be −K; and the rate matrix must be skew-symmetric — a rotating
+orthonormal frame can only rotate.)</div>
+
+<h2 id="helix">5 · Worked fully: the helix</h2>
+<p>\(\alpha(t) = (a\cos t, a\sin t, bt)\) with a = 2, b = 1 — every claim verified:</p>
+<table>
+<tr><th>quantity</th><th>formula</th><th>value</th></tr>
+<tr><td>speed</td><td>\(\sqrt{a^2+b^2} = c\) (constant)</td><td>2.236</td></tr>
+<tr><td>arc-length reparam</td><td>\(\beta(s) = \alpha(s/c)\), unit speed ✓</td><td>—</td></tr>
+<tr><td>curvature</td><td>\(K = a/(a^2+b^2)\)</td><td>0.400 (constant)</td></tr>
+<tr><td>torsion</td><td>\(\tau = b/(a^2+b^2)\)</td><td>0.200 (constant)</td></tr>
+</table>
+<p class="small muted">Constant K and τ make the helix the "straight line" of twisted curves —
+and b → 0 recovers the circle (τ = 0, K = 1/a); a → 0 kills the curvature. The slide's torsion
+formula prints its numerator cut off — it is b.</p>
+<figure><img src="figures/lec14/01_frenet_helix.svg" alt="Frenet frame on a helix" width="860">
+<figcaption>Fig 1 — the frame riding the helix: T along, N pointing at the axis, B completing the triad.</figcaption></figure>
+
+<h2 id="cov">6 · Covariant derivatives</h2>
+$$(\nabla_V W)(p) = \frac{d}{dt} W(p + t\,V_p)\Big|_{t=0}$$
+<p>"How does the field W change as I move along V?" — a directional derivative of one vector
+field along another (computationally: the Jacobian of W times V). Verified on the slides' own
+examples: constant fields give 0; for the radial field \(W = (x,y)/r\) and the tangential field
+\(V = (-y,x)/r\) on the plane, \(\nabla_V W = V/r\) (walking around the circle, the radial
+direction rotates toward V) and \(\nabla_W V = 0\) (walking outward, the tangential direction
+doesn't change). It is linear in both slots and function-linear in the direction slot.</p>
+
+<h2 id="lie">7 · The Lie bracket &amp; parallel parking</h2>
+$$[V, W] = \nabla_V W - \nabla_W V$$
+<p>The bracket measures the <em>failure of flows to commute</em>: go along V, then W, then back
+along each — the tiny loop doesn't close, and its defect points along [V, W]. The lecture's
+showpiece is the car \( (x, y, \theta)\) with controls (v, φ):</p>
+$$\dot x = v\cos\phi\cos\theta,\quad \dot y = v\cos\phi\sin\theta,\quad \dot\theta = \tfrac{v}{l}\sin\phi$$
+<p>No control produces sideways motion \((-\sin\theta, \cos\theta, 0)\) — that's the nonholonomic
+constraint. But for two steering angles the bracket of the control fields is, verified to 10⁻¹²:</p>
+$$[V_1, V_2] = \frac{\sin(\phi_1 - \phi_2)}{l}\,(-\sin\theta,\ \cos\theta,\ 0)$$
+<p><b>exactly the forbidden sideways direction.</b> And it's physical: flowing ε along
+\(+V_1, +V_2, -V_1, -V_2\) displaces the car by ε²[V₁,V₂] — measured ratio 0.999, pure sideways,
+zero net rotation. Parallel parking <em>is</em> the Lie bracket, and \([\,\cdot,\cdot\,] \neq 0\)
+is why 2 controls reach all 3 degrees of freedom (as long as φ₁ ≠ φ₂ — equal angles kill the
+bracket and the maneuver).</p>
+<figure><img src="figures/lec14/02_parking.svg" alt="Parallel parking wiggle" width="860">
+<figcaption>Fig 2 — three wiggle cycles, integrated from the real car ODE: θ returns every cycle, position creeps sideways by ε²·|[V₁,V₂]| per cycle.</figcaption></figure>
+<p>🕹️ <b>Try it:</b> wiggle the car; then set φ₁ = φ₂ and watch the bracket die:</p>
+<div class="demo-wrap"><iframe class="demo" src="demos/lec14/parking_bracket.html" height="640" title="Parking bracket"></iframe></div>
+
+<h2 id="manifolds">8 · Manifolds, charts, diffeomorphisms</h2>
+<p>A <b>smooth manifold</b> is a set M with a family of 1-1 charts \(\phi: U \subset \mathbb R^m \to M\)
+— coordinate systems that make M locally look like ℝᵐ. A <b>diffeomorphism</b> is a smooth 1-1
+map with smooth inverse (Inverse Function Theorem: \(\det J_x f \neq 0\) ⟺ local diffeomorphism —
+Lecture 2's Jacobian rank test again). Robotics examples from the slides, verified where numeric:</p>
+<ul>
+<li><b>Gaussians form a manifold:</b> global chart (μ, Σ) ∈ ℝⁿ × 𝒫(n) — "the space of beliefs"
+a filter moves through.</li>
+<li><b>The sphere needs ≥ 2 charts:</b> stereographic projection \(\phi(P) = \big(\frac{x}{1-z}, \frac{y}{1-z}\big)\)
+covers everything but the north pole (roundtrip verified to 10⁻¹⁶; |φ| → ∞ as z → 1 — Lecture
+12's chart-singularity story with its formula filled in).</li>
+<li><b>Möbius strip and torus:</b> explicit parameterizations; the torus (u, v) chart is
+Lecture 12's joint-angle square wearing its 3-D embedding.</li>
+</ul>
+
+<h2 id="summary">9 · Summary</h2>
+<ul>
+<li>Separate trace from parameterization; arc length is the honest clock, and unit speed makes \(\lVert\beta''\rVert\) pure geometry: curvature.</li>
+<li>The Frenet frame (T, N, B) is a moving coordinate system built from the motion; K bends it in-plane, τ twists it out — with the skew-symmetric rate equations T′ = KN, N′ = <b>−K</b>T + τB, B′ = −τN.</li>
+<li>Helix: K = a/(a²+b²) = 0.4, τ = b/(a²+b²) = 0.2, both constant. Clothoid: K = s, the jerk-free transition curve.</li>
+<li>∇_V W differentiates fields along fields; [V,W] = ∇_V W − ∇_W V measures non-commuting flows.</li>
+<li>The parking theorem of the course: [V₁,V₂] = sin(φ₁−φ₂)/l · (sideways) — verified in formula and by integrating the actual maneuver (ratio 0.999). Nonholonomy is a constraint on velocities, not on destinations.</li>
+<li>Manifolds = sets with charts; singular charts ≠ singular spaces; robotics lives on ℝⁿ, Sⁿ, SO(3), SE(3), Tⁿ and the Gaussian manifold.</li>
+</ul>
+
+<details><summary>⚠️ Typos in the slides to watch out for</summary><div class="body"><ul>
+<li>N′(s) slide: "\(N'(s) = K(s)T(s) + \tau(s)B(s)\)" and the Frenet-matrix entry (1,2) = +K —
+both need <b>−K</b>. Verified: the minus version holds to 10⁻¹⁰ on the helix; the printed version
+misses by exactly 2K, and the printed matrix isn't skew-symmetric (a rotating orthonormal frame's
+rate matrix must be). The same deck's line-form Frenet formulas two slides later print the minus
+correctly.</li>
+<li>Same slide block: "Given K(s) = N(s)·T′(s), it must be true that N′(s)·T(s) = −K(s)" is
+correct — it contradicts the +K line just above it.</li>
+<li>Helix example slide: the torsion formula's numerator is missing/cut off — it is
+\(\tau = \frac{b}{a^2+b^2}\) (verified 0.200 for a = 2, b = 1).</li>
+<li>Frenet-frame slide: "called the <b>Fernet</b> Frame" → Frenet (twice; Fernet is a liqueur).</li>
+<li>Manifolds slide: "Manifolds requiring multiple chart<b>ss</b>" → charts; sphere definition
+prints \(\mathcal S^2 = \{(x, y, x)\ldots\}\) → the third coordinate is z.</li>
+<li>Covariant-derivative properties: "\(\nabla_{fV+gU} W = f\nabla_V W + g\nabla_u W\)" — the last
+subscript should be U (capital), i.e. \(g\nabla_U W\).</li>
+</ul></div></details>
+
+<details><summary>🧠 Self-check questions</summary><div class="body">
+<details><summary>1 · Two trajectories share the same trace; one traverses it in half the time. Which Frenet quantities differ, and which don't?</summary><div class="body">None of the geometric ones: T, N, B, K, τ are parameterization-independent (that's why we reparameterize by arc length first). What differs is the speed profile v(t) — and therefore accelerations and motor torques. Geometry and timing are separable, and good planners exploit exactly that (plan the path, then time it).</div></details>
+<details><summary>2 · Why must a unit-speed curve's acceleration be perpendicular to its velocity?</summary><div class="body">β′·β′ = 1 is constant, so differentiating: 2β″·β′ = 0 (the lemma f·g const ⟹ f′·g = −f·g′ applied to f = g = β′). All the second derivative can do at constant speed is turn — which is why ‖β″‖ is a pure turning rate.</div></details>
+<details><summary>3 · Your path planner outputs line segments joined by circular arcs. A passenger comfort metric flags it. What's wrong and what fixes it?</summary><div class="body">At each line-arc joint, K jumps from 0 to 1/R instantly — lateral acceleration v²K steps, i.e. infinite jerk. Insert clothoid transitions (K(s) linear from 0 to 1/R): the steering rate becomes constant and finite. Same reason railways abandoned pure arcs in the 1800s.</div></details>
+<details><summary>4 · Compute the helix limit checks: what happens to K and τ as b → 0, and as a → 0?</summary><div class="body">b → 0: K → 1/a, τ → 0 — the planar circle (no twist). a → 0: K → 0, τ → 0 with the curve degenerating to the straight axis. The formulas K = a/(a²+b²), τ = b/(a²+b²) interpolate between the two primitive curves, which is a good memory check on where a and b belong.</div></details>
+<details><summary>5 · The parking wiggle moved the car ε²·0.24 per cycle. Why ε² and not ε — and what does that imply about parking in a tight spot?</summary><div class="body">First-order terms cancel by construction (each flow is undone); the leftover is the second-order commutator term ε²[V₁,V₂]. Practically: sideways progress is quadratically slow in the wiggle amplitude — halving your room per maneuver quarters the progress per cycle, which is why tight parallel parking takes so many back-and-forths.</div></details>
+<details><summary>6 · A colleague says "the car has only 2 controls but 3 DOF, so some poses are unreachable." Refute precisely.</summary><div class="body">Unreachable <em>velocities</em>, not poses: the constraint is on the tangent space. Because [V₁,V₂] points sideways — outside span(V₁,V₂) — the controls plus their bracket span all of ℝ³ (full Lie algebra rank), so any pose is reachable by composed maneuvers (Chow's theorem; our verified wiggle is the constructive proof).</div></details>
+</div></details>
+
+<div class="prevnext"><a href="lec13.html">← Lecture 13: Planning Algorithms</a><a href="index.html">Home</a></div>
+
+</div></main>
+</div>
+</body></html>

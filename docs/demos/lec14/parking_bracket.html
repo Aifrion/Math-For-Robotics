@@ -1,0 +1,96 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Parallel Parking = Lie Bracket</title>
+<style>
+:root{--text-primary:#1f2937;--text-secondary:#4b5563;--text-muted:#9ca3af;--text-success:#15803d;--text-accent:#1d4ed8;--bg-accent:#dbeafe;--border:#e5e7eb;--border-strong:#cbd5e1;--border-accent:#93c5fd;--radius:8px;--bg:#fff;--blue:#378ADD;--pink:#D4537E;--green:#16a34a;--amber:#BA7517}
+@media (prefers-color-scheme:dark){:root{--text-primary:#e5e7eb;--text-secondary:#cbd5e1;--text-muted:#6b7280;--text-success:#4ade80;--text-accent:#93c5fd;--bg-accent:#1e3a8a;--border:#2f2f2f;--border-strong:#4b5563;--border-accent:#3b82f6;--bg:#191919;--blue:#60a5fa;--pink:#f472b6;--green:#4ade80;--amber:#fbbf24}}
+body{margin:0;padding:12px 16px;background:var(--bg);color:var(--text-primary);font:14px/1.5 -apple-system,Segoe UI,Helvetica,Arial,sans-serif;max-width:900px}
+.btns{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:6px}
+.btns button{font:inherit;font-size:13px;padding:4px 10px;border:0.5px solid var(--border-strong);border-radius:var(--radius);background:transparent;color:var(--text-primary);cursor:pointer}
+.row{display:grid;grid-template-columns:230px 1fr 80px;gap:10px;align-items:center;margin:3px 0;font-size:13px}
+input[type=range]{width:100%}
+svg{touch-action:none}
+#out{font-size:13.5px;margin-top:4px;font-variant-numeric:tabular-nums}
+#cap{font-size:13px;color:var(--text-secondary);margin-top:4px;line-height:1.55}
+</style></head><body>
+<div class="btns"><button id="cyc">▶ one wiggle cycle (+V₁ +V₂ −V₁ −V₂)</button><button id="auto">▶▶ keep wiggling</button><button id="stop">⏸</button><button id="rst">reset</button></div>
+<div class="row"><span>steering φ₁ (phase 1 &amp; 3)</span><input type="range" id="p1" min="-0.6" max="0.6" step="0.05" value="0.5"><b id="p1v"></b></div>
+<div class="row"><span>steering φ₂ (phase 2 &amp; 4)</span><input type="range" id="p2" min="-0.6" max="0.6" step="0.05" value="-0.5"><b id="p2v"></b></div>
+<svg id="sv" width="100%" viewBox="0 0 860 420"></svg>
+<div id="out"></div>
+<div id="cap"></div>
+<script>
+// Car: xdot = v cos(phi) cos(th), ydot = v cos(phi) sin(th), thdot = v sin(phi)/l.
+// Wiggle cycle = flow eps along V(phi1), V(phi2), -V(phi1), -V(phi2).
+// Net displacement ~ eps^2 [V1,V2] = eps^2 sin(phi1-phi2)/l * (sideways).
+const l=2.5, EPS=0.85;
+let phi1=0.5, phi2=-0.5;
+let q={x:0,y:0,th:Math.PI/2}, q0={...q}, trail=[], cycles=0, anim=null, phase=0, tInPhase=0;
+const sv=document.getElementById('sv');
+const css=v=>`var(--${v})`;
+const X=v=>620+v*120, Y=v=>210-v*120;
+function deriv(q,phi,sgn){
+ return{x:sgn*Math.cos(phi)*Math.cos(q.th), y:sgn*Math.cos(phi)*Math.sin(q.th), th:sgn*Math.sin(phi)/l}}
+function stepPhase(){
+ const specs=[[phi1,1],[phi2,1],[phi1,-1],[phi2,-1]];
+ const[phi,sgn]=specs[phase];
+ const dt=0.02;
+ const d=deriv(q,phi,sgn);
+ q={x:q.x+dt*d.x, y:q.y+dt*d.y, th:q.th+dt*d.th};
+ trail.push({...q,phase});
+ tInPhase+=dt;
+ if(tInPhase>=EPS){tInPhase=0;phase=(phase+1)%4;
+  if(phase===0){cycles++;return 'cycle'}}
+ return 'going'}
+function drawCar(x,y,th,col){
+ const L2=0.42,W2=0.2;
+ const c=Math.cos(th),s=Math.sin(th);
+ const pts=[[L2,W2],[L2,-W2],[-L2,-W2],[-L2,W2]].map(([u,v])=>[X(x+u*c-v*s),Y(y+u*s+v*c)]);
+ return `<polygon points="${pts.map(p=>p.map(v=>v.toFixed(1)).join(',')).join(' ')}" fill="${col}" opacity="0.85"/>`+
+  `<circle cx="${X(x+L2*0.8*c)}" cy="${Y(y+L2*0.8*s)}" r="3" fill="var(--bg)"/>`}
+function draw(){
+ const cols=[css('blue'),css('green'),css('blue'),css('green')];
+ let s='';
+ // parking slot scenery
+ s+=`<rect x="20" y="30" width="330" height="360" rx="10" fill="none" stroke="var(--border)"/>`;
+ s+=`<text x="34" y="56" style="font-size:12.5px;font-weight:600;fill:var(--text-primary)">why this matters</text>`;
+ const msgs=['the car CANNOT slide sideways:','no control points along (−sinθ, cosθ).','','the wiggle manufactures that motion:','net per cycle ≈ ε²·sin(φ₁−φ₂)/l','perpendicular to the heading,','with θ returning to start.','','φ₁ = φ₂ ⇒ bracket = 0 ⇒ no progress:','straight in, straight back, nothing.'];
+ msgs.forEach((m,i)=>s+=`<text x="34" y="${84+i*22}" style="font-size:12px;fill:var(--text-secondary)">${m}</text>`);
+ // trail
+ let last=null;
+ for(const t of trail){
+  if(last)s+=`<path d="M${X(last.x).toFixed(1)} ${Y(last.y).toFixed(1)}L${X(t.x).toFixed(1)} ${Y(t.y).toFixed(1)}" stroke="${cols[t.phase]}" stroke-width="1.6" ${t.phase>=2?'stroke-dasharray="3 3"':''}/>`;
+  last=t}
+ // start ghost & current car
+ s+=drawCar(q0.x,q0.y,q0.th,'var(--border-strong)');
+ s+=drawCar(q.x,q.y,q.th,css('amber'));
+ // net displacement arrow
+ if(cycles>0){
+  s+=`<path d="M${X(q0.x)} ${Y(q0.y)}L${X(q.x)} ${Y(q.y)}" stroke="${css('pink')}" stroke-width="2" stroke-dasharray="5 4"/>`}
+ sv.innerHTML=s;
+ const pred=EPS*EPS*Math.abs(Math.sin(phi1-phi2))/l;
+ const net=Math.hypot(q.x-q0.x,q.y-q0.y);
+ document.getElementById('out').innerHTML=
+  `cycles: <b>${cycles}</b> · net displacement <b style="color:${css('pink')}">${net.toFixed(3)}</b>`+
+  ` · ε²|[V₁,V₂]| per cycle = <b>${pred.toFixed(3)}</b>`+
+  (Math.abs(phi1-phi2)<1e-9?' — <b style="color:'+css('pink')+'">bracket is ZERO: wiggle all day, go nowhere</b>':'')+
+  ` · heading drift ${(Math.abs(((q.th-q0.th)%(2*Math.PI)))*180/Math.PI).toFixed(1)}°`;
+ document.getElementById('cap').textContent='Phase colors: blue = steering φ₁ (forward then reverse), green = φ₂. One full cycle is the Lie bracket made flesh: drive the four flows and the car ends displaced SIDEWAYS — the direction no control can produce directly — by ε²·[V₁,V₂] per cycle. Set φ₁ = φ₂ and the bracket dies: the maneuvers cancel exactly. This is why parallel parking takes back-and-forth, and why a 2-control car can still reach all 3 DOF (controllability via brackets).'}
+function loop(many){
+ const r=stepPhase();
+ draw();
+ if(r==='cycle'&&!many){anim=null;return}
+ anim=requestAnimationFrame(()=>loop(many))}
+document.getElementById('cyc').onclick=()=>{if(!anim)loop(false)};
+document.getElementById('auto').onclick=()=>{if(!anim)loop(true)};
+document.getElementById('stop').onclick=()=>{if(anim){cancelAnimationFrame(anim);anim=null}};
+document.getElementById('rst').onclick=()=>{if(anim){cancelAnimationFrame(anim);anim=null}
+ q={x:0,y:0,th:Math.PI/2};q0={...q};trail=[];cycles=0;phase=0;tInPhase=0;draw()};
+const upd=()=>{document.getElementById('p1v').textContent=phi1.toFixed(2).replace('-','−');
+ document.getElementById('p2v').textContent=phi2.toFixed(2).replace('-','−')};
+document.getElementById('p1').oninput=e=>{phi1=+e.target.value;upd();draw()};
+document.getElementById('p2').oninput=e=>{phi2=+e.target.value;upd();draw()};
+upd();draw();
+const __post=()=>parent.postMessage({demoHeight:document.body.scrollHeight+8},'*');
+addEventListener('load',__post);new ResizeObserver(__post).observe(document.body);
+</script></body></html>

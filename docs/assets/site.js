@@ -17,7 +17,7 @@
     { href: 'lec11.html', title: '11 · Regression & Classification' },
     { href: 'lec12.html', title: '12 · Configuration Space' },
     { href: 'lec13.html', title: '13 · Planning Algorithms' },
-    { href: 'lec14.html', title: '14 · Differential Geometry', soon: true },
+    { href: 'lec14.html', title: '14 · Differential Geometry' },
     { group: 'Homework' },
     { href: 'hw2.html', title: 'HW2 · Trajectory Interpolation' },
     { href: 'hw3.html', title: 'HW3 · ODEs & Plane Fitting' }
