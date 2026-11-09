@@ -1,0 +1,89 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Marching to the Singularity</title>
+<style>
+:root{--text-primary:#1f2937;--text-secondary:#4b5563;--text-muted:#9ca3af;--text-success:#15803d;--text-accent:#1d4ed8;--bg-accent:#dbeafe;--border:#e5e7eb;--border-strong:#cbd5e1;--border-accent:#93c5fd;--radius:8px;--bg:#fff;--blue:#378ADD;--pink:#D4537E;--green:#16a34a;--amber:#BA7517;--orange:#ea580c;--purple:#7c3aed}
+@media (prefers-color-scheme:dark){:root{--text-primary:#e5e7eb;--text-secondary:#cbd5e1;--text-muted:#6b7280;--text-success:#4ade80;--text-accent:#93c5fd;--bg-accent:#1e3a8a;--border:#2f2f2f;--border-strong:#4b5563;--border-accent:#3b82f6;--bg:#191919;--blue:#60a5fa;--pink:#f472b6;--green:#4ade80;--amber:#fbbf24;--orange:#fb923c;--purple:#a78bfa}}
+body{margin:0;padding:12px 16px;background:var(--bg);color:var(--text-primary);font:14px/1.5 -apple-system,Segoe UI,Helvetica,Arial,sans-serif;max-width:900px}
+.btns{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:6px}
+.btns button{font:inherit;font-size:13px;padding:4px 10px;border:0.5px solid var(--border-strong);border-radius:var(--radius);background:transparent;color:var(--text-primary);cursor:pointer}
+.btns button.on{background:var(--bg-accent);color:var(--text-accent);border-color:var(--border-accent)}
+.btns span{font-size:13px;color:var(--text-secondary)}
+#out{font-size:13.5px;margin-top:4px;font-variant-numeric:tabular-nums;line-height:1.7}
+#cap{font-size:13px;color:var(--text-secondary);margin-top:4px;line-height:1.55}
+</style></head><body>
+<div class="btns"><span>h =</span>
+<button data-h="0.2">0.2</button><button data-h="0.1">0.1</button><button data-h="0.05" class="on">0.05</button><button data-h="0.025">0.025</button><button data-h="0.0125">0.0125</button>
+<span style="margin-left:14px">show:</span>
+<button id="be" class="on">Euler</button><button id="br" class="on">RK4</button><button id="bq" class="on">Richardson</button></div>
+<svg id="sv" width="100%" viewBox="0 0 860 430"></svg>
+<div id="out"></div>
+<div id="cap"></div>
+<script>
+// dy/dx = 1/(x^2 (1-y)), y(1) = -1, marching from x=1 toward x=0.
+// exact: y = 1 - sqrt(2 + 2/x)
+let H=0.05, show={e:true,r:true,q:true};
+const f=(x,y)=>1/(x*x*(1-y));
+const yex=x=>1-Math.sqrt(2+2/x);
+const sv=document.getElementById('sv');
+const css=v=>`var(--${v})`;
+const L=52,T=16,W=780,Hh=360;
+const XMIN=0,XMAX=1.02,YMIN=-9,YMAX=0.4;
+const X=v=>L+(v-XMIN)/(XMAX-XMIN)*W, Y=v=>T+(YMAX-v)/(YMAX-YMIN)*Hh;
+const fm=(n,d=4)=>n.toFixed(d).replace('-','−');
+function euler(h){const xs=[1],ys=[-1];let x=1,y=-1;
+ while(x>1e-9){y-=h*f(x,y);x=Math.round((x-h)*1e9)/1e9;xs.push(x);ys.push(y)}return[xs,ys]}
+function rk4(h){const xs=[1],ys=[-1];let x=1,y=-1;
+ while(x-h>1e-9){const xn=Math.round((x-h)*1e9)/1e9;
+  const k1=f(x,y),k2=f(x-h/2,y-h/2*k1),k3=f(x-h/2,y-h/2*k2),k4=f(xn,y-h*k3);
+  y-=h/6*(k1+2*k2+2*k3+k4);x=xn;xs.push(x);ys.push(y)}return[xs,ys]}
+function rich(h){const[x1,y1]=euler(h),[x2,y2]=euler(h/2);
+ return[x1,y1.map((v,i)=>2*y2[2*i]-v)]}
+function path(xs,ys){let s='',pen=false;
+ for(let i=0;i<xs.length;i++){const yv=ys[i];
+  if(yv<YMIN-2||!isFinite(yv)){pen=false;continue}
+  s+=(pen?'L':'M')+X(xs[i]).toFixed(1)+' '+Y(Math.max(YMIN-1,yv)).toFixed(1);pen=true}
+ return s}
+function draw(){
+ let s=`<defs><clipPath id="cp"><rect x="${L}" y="${T}" width="${W}" height="${Hh}"/></clipPath></defs>`;
+ for(let v=0;v>=-8;v-=2)s+=`<path d="M${L} ${Y(v)}H${L+W}" stroke="var(--border)" stroke-width="0.6"/><text x="${L-8}" y="${Y(v)+4}" text-anchor="end" style="font-size:11px;fill:var(--text-muted)">${v?('−'+(-v)):'0'}</text>`;
+ for(const v of[0,0.25,0.5,0.75,1])s+=`<text x="${X(v)}" y="${T+Hh+16}" text-anchor="middle" style="font-size:11px;fill:var(--text-muted)">${v}</text>`;
+ s+=`<rect x="${L}" y="${T}" width="${W}" height="${Hh}" fill="none" stroke="var(--border-strong)" stroke-width="0.5"/>`;
+ s+=`<path d="M${X(0)} ${T}V${T+Hh}" stroke="${css('pink')}" stroke-width="1.6" stroke-dasharray="5 4"/>`;
+ s+=`<text x="${X(0)+8}" y="${T+Hh-10}" style="font-size:11.5px;fill:${css('pink')};font-weight:600">wall: y → −∞</text>`;
+ s+=`<g clip-path="url(#cp)">`;
+ // exact
+ let ex='';for(let i=0;i<=600;i++){const x=0.021+(1.0-0.021)*Math.pow(i/600,1.6);
+  ex+=(i?'L':'M')+X(x).toFixed(1)+' '+Y(Math.max(YMIN-1,yex(x))).toFixed(1)}
+ s+=`<path d="${ex}" stroke="var(--text-primary)" stroke-width="2.6" fill="none"/>`;
+ const[xe,ye]=euler(H),[xr,yr]=rk4(H),[xq,yq]=rich(H);
+ if(show.e){s+=`<path d="${path(xe,ye)}" stroke="${css('orange')}" stroke-width="2" fill="none" stroke-dasharray="5 4"/>`;
+  for(let i=0;i<xe.length;i+=Math.max(1,Math.round(xe.length/22)))s+=`<circle cx="${X(xe[i])}" cy="${Y(Math.max(YMIN-1,ye[i]))}" r="3" fill="${css('orange')}"/>`}
+ if(show.q){s+=`<path d="${path(xq,yq)}" stroke="${css('purple')}" stroke-width="2" fill="none" stroke-dasharray="2 3"/>`}
+ if(show.r){s+=`<path d="${path(xr,yr)}" stroke="${css('green')}" stroke-width="2" fill="none"/>`;
+  for(let i=0;i<xr.length;i+=Math.max(1,Math.round(xr.length/22)))s+=`<circle cx="${X(xr[i])}" cy="${Y(Math.max(YMIN-1,yr[i]))}" r="3" fill="none" stroke="${css('green')}" stroke-width="1.5"/>`}
+ s+=`</g>`;
+ s+=`<circle cx="${X(1)}" cy="${Y(-1)}" r="6" fill="${css('amber')}"/>`;
+ s+=`<text x="${X(1)-10}" y="${Y(-1)-12}" text-anchor="end" style="font-size:12px;fill:${css('amber')};font-weight:600">start y(1) = −1</text>`;
+ sv.innerHTML=s;
+ // errors at the last grid point >= H (truth finite there)
+ const xev=xe[xe.length-2],tru=yex(xev);
+ const ee=Math.abs(ye[ye.length-2]-tru);
+ const er=Math.abs(yr[yr.length-1]-yex(xr[xr.length-1]));
+ const eq=Math.abs(yq[yq.length-2]-tru);
+ document.getElementById('out').innerHTML=
+  `at x = ${fm(xev,4)} (last point before the wall): exact ${fm(tru)} · `+
+  (show.e?`<b style="color:${css('orange')}">Euler err ${ee.toExponential(1).replace('-','−')}</b> · `:'')+
+  (show.q?`<b style="color:${css('purple')}">Richardson err ${eq.toExponential(1).replace('-','−')}</b> · `:'')+
+  (show.r?`<b style="color:${css('green')}">RK4 err ${er.toExponential(1).replace('-','−')}</b>`:'')+
+  `<br>at x = 0: exact −∞ · Euler reports <b style="color:${css('orange')}">${fm(ye[ye.length-1],2)}</b> (finite!) · RK4 cannot take the last step (k₄ needs f(0,·))`;
+ document.getElementById('cap').textContent='All methods march from x = 1 leftward with step −h. Shrink h: every method improves away from the wall, but the singularity at x = 0 defeats them all — the true y(0) is −∞. Euler returns a finite number there because it only ever evaluates f at the point it is leaving; that number is not an approximation of anything.'}
+document.querySelectorAll('[data-h]').forEach(b=>b.onclick=()=>{
+ document.querySelectorAll('[data-h]').forEach(x=>x.classList.toggle('on',x===b));
+ H=+b.dataset.h;draw()});
+const tog=(id,k)=>document.getElementById(id).onclick=e=>{show[k]=!show[k];e.target.classList.toggle('on',show[k]);draw()};
+tog('be','e');tog('br','r');tog('bq','q');
+draw();
+const __post=()=>parent.postMessage({demoHeight:document.body.scrollHeight+8},'*');
+addEventListener('load',__post);new ResizeObserver(__post).observe(document.body);
+</script></body></html>

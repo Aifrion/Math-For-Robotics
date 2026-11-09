@@ -1,0 +1,239 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>HW3 — ODEs &amp; Plane Fitting | Math for Robotics</title>
+<link rel="stylesheet" href="assets/site.css">
+<link rel="stylesheet" href="vendor/katex/katex.min.css">
+<script defer src="vendor/katex/katex.min.js"></script>
+<script defer src="vendor/katex/auto-render.min.js"></script>
+<script defer src="assets/site.js"></script>
+</head><body>
+<div class="layout">
+<main><div class="content">
+
+<h1>HW3 companion: an ODE with a wall, and planes in real point clouds</h1>
+
+<div class="callout summary"><span class="tag">The one-sentence version:</span>
+Q1 takes Lecture 7's integrators to an equation that <b>blows up at the end of the interval</b> —
+the interesting answers are about what each method does at the wall; Q2 takes Lecture 2's least
+squares to <b>real RealSense scans</b>, where the actual work is rejecting the 76% of points that
+aren't the thing you're fitting.
+<br><span class="small muted">CSE 276C, HW3 · due Nov 12 · data in <code>hw3/</code> ·
+every number on this page computed by <code>scripts/hw3/verify.py</code>.</span></div>
+
+<div class="callout gotcha"><span class="tag">⚠️ Academic integrity:</span> this page teaches the
+methods and verifies the numbers so you can <em>check</em> your own work. Write your own code and
+your own report; the modeling decisions flagged in the ✏️ boxes are yours to make and defend.</div>
+
+<div class="toc"><b>Contents</b><ol>
+<li><a href="#ode">Q1 · The equation and what it models</a></li>
+<li><a href="#exact">Exact solution — and the trick question about y(0)</a></li>
+<li><a href="#euler">Euler, marching backward</a></li>
+<li><a href="#rk4">RK4 — and the step it cannot take</a></li>
+<li><a href="#rich">Richardson extrapolation</a></li>
+<li><a href="#clouds">Q2 · The data (and the scrub step nobody tells you about)</a></li>
+<li><a href="#plane">Plane fitting by SVD</a></li>
+<li><a href="#ransac">Clutter: RANSAC + refit</a></li>
+<li><a href="#cse">All the planes of a building</a></li>
+<li><a href="#summary">Summary</a></li>
+</ol></div>
+
+<h2 id="big">The big picture</h2>
+<table>
+<tr><th>HW3 part</th><th>lecture machinery</th><th>the twist in this assignment</th></tr>
+<tr><td>Q1 a</td><td>separation of variables</td><td>the solution has no finite value at x = 0</td></tr>
+<tr><td>Q1 b–d</td><td><a href="lec7.html">Lecture 7</a>: Euler, RK4, Richardson</td><td>integrating <em>toward</em> a singularity, backward from x = 1</td></tr>
+<tr><td>Q2 a</td><td><a href="lec2.html">Lecture 2</a>: least squares, SVD</td><td>plain LSQ fails — most points aren't the table</td></tr>
+<tr><td>Q2 b</td><td>same, applied repeatedly</td><td>peel planes off one at a time (and 33% of pixels are invalid)</td></tr>
+</table>
+
+<h2 id="ode">1 · Q1: the equation and what it models</h2>
+$$\frac{dy}{dx} = \frac{1}{x^2\,(1-y)}, \qquad y(1) = -1, \qquad x \in (0, 1]$$
+<table>
+<tr><th>symbol</th><th>meaning</th></tr>
+<tr><td>\(1/x^2\)</td><td>a potential-field force law: it diverges as you approach the obstacle at x = 0 (the spec's "potential field navigation")</td></tr>
+<tr><td>\(1-y\)</td><td>at the start, \(1-y=2\): the slope is positive and finite everywhere on (0,1]</td></tr>
+<tr><td>condition at x = <b>1</b></td><td>the data is at the <em>right</em> end — you must integrate <b>leftward</b>, step −h, toward the wall</td></tr>
+</table>
+
+<h2 id="exact">2 · Exact solution — and the trick question about y(0)</h2>
+<p>The equation is separable: move everything with y to the left, everything with x to the right.</p>
+$$(1-y)\,dy = \frac{dx}{x^2} \;\Rightarrow\; y - \frac{y^2}{2} = -\frac{1}{x} + C
+\;\overset{y(1)=-1}{\Longrightarrow}\; C = -\tfrac12$$
+<p>Solve the quadratic for y and pick the branch that passes through (1, −1):</p>
+$$y(x) \;=\; 1 - \sqrt{2 + \tfrac{2}{x}}$$
+<details><summary>Worked example: every step (click to open)</summary><div class="body">
+<p>Integrate: \(\int (1-y)dy = y - y^2/2\) and \(\int x^{-2}dx = -1/x\). At (1, −1):
+\(-1 - \tfrac12 = -1 + C \Rightarrow C = -\tfrac12\). Rearrange
+\(y^2 - 2y - (1 + 2/x) = 0\), so \(y = 1 \pm \sqrt{2 + 2/x}\). At x = 1 the root is
+\(\sqrt{4} = 2\); only the minus branch gives −1. Check it solves the ODE: differentiating,
+\(y' = \frac{1}{x^2\sqrt{2+2/x}} = \frac{1}{x^2(1-y)}\) ✓ (also verified numerically and against
+<code>solve_ivp</code> at 10⁻¹² tolerance in <code>verify.py</code>).</p></div></details>
+<p><b>So what is y(0)?</b> As \(x \to 0^+\), \(2/x \to \infty\), so</p>
+$$y(x) \approx -\sqrt{2/x} \;\longrightarrow\; -\infty$$
+<p>y(0.05) = 1 − √42 = −5.4807, y(0.01) = −13.21, y(0.001) = −43.74 … there is no finite y(0).</p>
+<div class="callout key"><span class="tag">💡 The point of part (a):</span> "solve for y(0) (even
+though the equation is not defined for x = 0)" is an invitation to <em>notice</em> the divergence,
+not to produce a number. The potential wall at the obstacle is infinitely tall — which is exactly
+what a repulsive potential field is designed to be. Say that in your report, with the limit.</div>
+
+<h2 id="euler">3 · Euler, marching backward (h = 0.05)</h2>
+$$y_{k+1} = y_k - h\, f(x_k, y_k), \qquad x_{k+1} = x_k - h$$
+<p>20 steps take you from x = 1 to x = 0. Note Euler evaluates f only at the point it is
+<em>leaving</em> — so it reaches x = 0 without ever dividing by zero, and happily reports
+<b>y(0) ≈ −8.12</b>. A finite answer for a quantity that is actually −∞: not an approximation,
+a blind spot.</p>
+<table>
+<tr><th>where</th><th>exact</th><th>Euler</th><th>|error|</th></tr>
+<tr><td>x = 0.50 (far from the wall)</td><td>−1.4495</td><td>−1.4240</td><td>2.6 × 10⁻²</td></tr>
+<tr><td>x = 0.05 (one step from the wall)</td><td>−5.4807</td><td>−4.4659</td><td><b>1.01</b></td></tr>
+<tr><td>x = 0</td><td>−∞</td><td>−8.12</td><td>∞</td></tr>
+</table>
+<p class="small muted">Measured convergence order at x = 0.5: 0.985 ≈ 1, as theory says. The 40×
+error growth from x = 0.5 to x = 0.05 is the singularity, not the method: the local error scales
+with derivatives of y, and those scale like powers of 1/x here.</p>
+
+<h2 id="rk4">4 · RK4 — and the step it cannot take</h2>
+$$k_1 = f(x_k, y_k),\quad k_2 = f(x_k - \tfrac h2, y_k - \tfrac h2 k_1),\quad
+k_3 = f(x_k - \tfrac h2, y_k - \tfrac h2 k_2),\quad k_4 = f(x_k - h, y_k - h k_3)$$
+$$y_{k+1} = y_k - \tfrac h6 (k_1 + 2k_2 + 2k_3 + k_4)$$
+<p>Errors with the same h = 0.05: <b>7.5 × 10⁻⁷</b> at x = 0.5 (vs Euler's 2.6 × 10⁻²) and
+2.0 × 10⁻² at x = 0.05. Four orders of magnitude better for 4× the work — Lecture 7's trade,
+measured on this problem.</p>
+<div class="callout gotcha"><span class="tag">⚠️ The last step:</span> stepping from x = 0.05 to
+x = 0 requires \(k_4 = f(0, \cdot)\) — division by zero. RK4 <em>cannot reach x = 0</em> on this
+problem without special treatment. That's not a bug in your code; it's the honest answer, and your
+report should say so (options: stop at x = h, shrink the final step, or substitute variables).
+Euler's "success" at reaching 0 is the misleading one.</div>
+
+<h2 id="rich">5 · Richardson extrapolation</h2>
+<p>Lecture 7's Bulirsch–Stoer idea in one line: run Euler at h and h/2; since the error is ≈ C·h,
+the combination</p>
+$$y_R = 2\,y_{h/2} - y_h$$
+<p>cancels the leading error term and upgrades first order to second:</p>
+<table>
+<tr><th>at x = 0.5</th><th>|error|</th><th></th></tr>
+<tr><td>Euler, h = 0.05</td><td>2.6 × 10⁻²</td><td></td></tr>
+<tr><td>Richardson on Euler</td><td><b>2.7 × 10⁻⁴</b></td><td>~100× better for 3× the evaluations</td></tr>
+<tr><td>RK4</td><td>7.5 × 10⁻⁷</td><td>still the efficiency king here</td></tr>
+</table>
+<p class="small muted">Near the wall (x = 0.05) the same ranking holds: Euler 1.01, Richardson
+9.3 × 10⁻², RK4 2.0 × 10⁻².</p>
+<figure><img src="figures/hw3/01_ode_solutions.svg" alt="Exact solution and numerical solutions" width="860">
+<figcaption>Fig 1 — the solution dives toward −∞ at x = 0. Euler (orange) lags the dive and invents a finite y(0); RK4 (green) hugs the truth until its last step becomes impossible.</figcaption></figure>
+<figure><img src="figures/hw3/02_ode_errors.svg" alt="Errors vs x for the three methods" width="760">
+<figcaption>Fig 2 — |error| while marching toward the wall. The vertical gaps are the method orders; everyone's error explodes as x → 0.</figcaption></figure>
+<p>🕹️ <b>Try it:</b> shrink h and watch who wins where — and what each method claims at x = 0.</p>
+<div class="demo-wrap"><iframe class="demo" src="demos/hw3/ode_marcher.html" height="560" title="ODE marcher"></iframe></div>
+<div class="callout fix"><span class="tag">✏️ Decisions to make (and state) in your report:</span>
+<ul><li><b>Where you quote the error.</b> "How accurate is your solution" needs a location: a table of
+|error| at a few x (and the max over the grid) is the defensible answer. Error "at x = 0" is
+meaningless — the truth is −∞.</li>
+<li><b>Integration direction.</b> The condition is at x = 1, so you march with step −h. Say so.</li>
+<li><b>What your RK4 does at the final step</b> (stop at 0.05? shrink the step? why?).</li>
+<li><b>Which Richardson.</b> This page extrapolates Euler (h, h/2). Extrapolating RK4 or stepping
+with the midpoint method are equally defensible — name your base method and its order.</li></ul></div>
+
+<h2 id="clouds">6 · Q2: the data — and the scrub step nobody tells you about</h2>
+<p>Three RealSense-style clouds, one <code>x y z</code> triple per line
+(<code>np.loadtxt</code> reads them directly):</p>
+<table>
+<tr><th>file</th><th>lines</th><th>valid points</th><th>what it is</th></tr>
+<tr><td><code>Empty2.asc</code></td><td>307,200 (= 640×480)</td><td>240,967</td><td>empty table, full frame</td></tr>
+<tr><td><code>TableWithObjects2.asc</code></td><td>19,200 (= 160×120)</td><td>15,185</td><td>same table, cluttered, different capture</td></tr>
+<tr><td><code>CSE.asc</code></td><td>200,000</td><td>200,000</td><td>CSE building from the bear courtyard</td></tr>
+</table>
+<div class="callout gotcha"><span class="tag">⚠️ The hidden landmine:</span> <b>66,233 points of
+the empty-table cloud are exactly (0, 0, 0)</b> — pixels where the depth camera got no return
+(21% of the cluttered cloud too). They are not "points near the camera"; they are <em>failures
+encoded as coordinates</em>. Every plane through the origin collects all of them as perfect
+inliers, so if you skip this filter, RANSAC confidently returns a <b>plane through the camera</b>
+instead of the table (we measured exactly that before filtering). Drop them first:
+<code>P = P[np.linalg.norm(P, axis=1) &gt; 1e-6]</code>. This <em>is</em> the "describe how you
+filter the data" part of the question.</div>
+
+<h2 id="plane">7 · Plane fitting by SVD</h2>
+<p>A plane is a point c and a unit normal n with \(\mathbf n\cdot(\mathbf p - \mathbf c) = 0\).
+The least-squares plane through points P minimizes perpendicular distance — Lecture 2's smallest
+singular direction:</p>
+$$\mathbf c = \tfrac1N\textstyle\sum \mathbf p_i, \qquad
+P - \mathbf c = U\,\Sigma\, V^\top, \qquad
+\mathbf n = \mathbf v_3 \;(\text{column of smallest } \sigma), \qquad d = -\mathbf n\cdot\mathbf c$$
+<table>
+<tr><th>symbol</th><th>meaning</th></tr>
+<tr><td>\(\mathbf v_3\)</td><td>direction of least spread = the normal (the plane itself spans v₁, v₂)</td></tr>
+<tr><td>\(\sigma_3/\sqrt N\)</td><td>rms point-to-plane distance — your planarity meter</td></tr>
+<tr><td>\(d\)</td><td>plane offset: the plane is \(\mathbf n\cdot\mathbf p + d = 0\)</td></tr>
+</table>
+<p>Fitting <em>everything</em> (after the zero filter) gives rms 166 mm — the "plane" through
+table + floor + background is no plane at all. The fit is fine; the point set is wrong.</p>
+
+<h2 id="ransac">8 · Clutter: RANSAC + refit</h2>
+<p>RANSAC in one breath: a plane needs only 3 points, so <b>guess 3 at random, count how many
+points lie within a threshold of their plane, keep the best guess, then LSQ-refit on its inliers
+and re-threshold until the inlier set stops changing.</b> Outliers can't vote a wrong plane into
+winning unless they outnumber and <em>agree with</em> each other.</p>
+<table>
+<tr><th>table fit (1 cm band)</th><th>normal n</th><th>inliers</th><th>rms</th></tr>
+<tr><td>empty cloud</td><td>(0.001, 0.909, 0.417)</td><td>72,062 / 240,967 (30%)</td><td>4.0 mm</td></tr>
+<tr><td>cluttered cloud</td><td>(0.000, 0.911, 0.412)</td><td>3,641 / 15,185 (24%)</td><td>4.2 mm</td></tr>
+</table>
+<p>The two captures (different resolution, slightly different pose) agree to <b>0.28° in tilt and
+5.8 mm in offset</b> — the same physical table, recovered twice, with 70–76% of each view being
+"not table". Split-half stability: 0.01° (empty), 0.6° (cluttered).</p>
+<figure><img src="figures/hw3/03_table_fit.svg" alt="Cluttered table slice with fitted plane" width="860">
+<figcaption>Fig 3 — a side slice of the cluttered cloud. Green = within 1 cm of the fitted plane; gray = objects, floor, background. The rms of the kept points is camera noise (≈4 mm), not model error.</figcaption></figure>
+<p>🕹️ <b>Try it:</b> the same algorithm in 2D, including on a real slice of your own data. Watch
+naive LSQ get dragged by clutter, then let 60 random trials fix it.</p>
+<div class="demo-wrap"><iframe class="demo" src="demos/hw3/ransac_explorer.html" height="620" title="RANSAC explorer"></iframe></div>
+<div class="callout insight"><span class="tag">💡 Threshold = noise, not geometry:</span> the 1 cm
+band isn't tuned to the scene — it's a few × the sensor's depth noise (≈4 mm here). Set it from
+the sensor datasheet or from the rms of an obviously-flat patch, and say which you did.</div>
+
+<h2 id="cse">9 · All the planes of a building</h2>
+<p>Part (b)'s "generalize" is three words: <b>fit, remove, repeat.</b> Run RANSAC, delete the
+winning plane's inliers, run it again on the survivors — each pass surfaces the next-biggest
+planar structure:</p>
+<table>
+<tr><th>pass</th><th>found</th><th>inliers</th><th>normal (camera frame)</th></tr>
+<tr><td>1</td><td>ground</td><td>111,965 (56%)</td><td>(−0.04, −0.01, 1.00)</td></tr>
+<tr><td>2</td><td>wall A</td><td>19,414</td><td>(0.43, 0.90, 0.02)</td></tr>
+<tr><td>3</td><td>wall B</td><td>18,072</td><td>(0.78, −0.62, 0.02)</td></tr>
+<tr><td>4</td><td>wall A′</td><td>11,605</td><td>(−0.42, −0.91, 0.01)</td></tr>
+</table>
+<p class="small muted">Sanity checks the data passes: wall A ⊥ ground to 89.5°, and "wall A′" is
+parallel to A just 16 cm behind it — the building's recessed facade layer (windows), not a second
+building. Stop criterion: when the best remaining plane's inlier count falls below a floor (or
+its rms stops looking like sensor noise), the dominant planes are out.</p>
+<figure><img src="figures/hw3/04_cse_planes.svg" alt="CSE building planes, top view" width="860">
+<figcaption>Fig 4 — top view of the courtyard scan. Gray = ground inliers; blue/red/purple = successive wall extractions. The 0.15 m threshold is looser here: outdoor scans at tens of meters are noisier than a tabletop at 1 m.</figcaption></figure>
+<div class="callout fix"><span class="tag">✏️ Decisions to make (and state) in your report:</span>
+<ul><li>the invalid-point filter (and how many points it removed);</li>
+<li>inlier threshold per scene (1 cm indoors vs 15 cm outdoors) and why;</li>
+<li>number of RANSAC trials (we used 300; the standard \(\log(1-p)/\log(1-w^3)\) formula with
+w = 0.24 says ~330 for 99% confidence — quote it);</li>
+<li>your stop criterion for "dominant planes".</li></ul></div>
+
+<h2 id="summary">10 · Summary</h2>
+<ul>
+<li>Q1: separable → \(y = 1 - \sqrt{2 + 2/x}\); y(0) is a limit, and the limit is −∞. Say it, don't fudge it.</li>
+<li>Same h, same problem: Euler 2.6 × 10⁻², Richardson 2.7 × 10⁻⁴, RK4 7.5 × 10⁻⁷ (at x = 0.5). Order is everything.</li>
+<li>At the wall, methods fail in different styles: Euler fabricates a finite y(0); RK4 refuses the step. Refusing is more honest.</li>
+<li>Q2: the fit is one SVD; the <em>work</em> is point selection — drop (0,0,0) failures, then RANSAC + iterated refit.</li>
+<li>Repeat-and-remove turns one plane fitter into a building parser: ground 56%, then walls, down to the 16-cm facade recess.</li>
+</ul>
+
+<details><summary>🧠 Self-check questions</summary><div class="body">
+<details><summary>1 · Why does Euler produce a finite y(0) while RK4 won't even take the step?</summary><div class="body">Euler only evaluates f at the left end of each step — never at x = 0. RK4's k₄ evaluates f at the step's destination, which is x = 0, where f divides by zero. Neither "knows" y(0) = −∞; they just fail differently — silently vs loudly.</div></details>
+<details><summary>2 · Your Euler error at x = 0.5 is 2.6 × 10⁻². What do you predict at h = 0.025, and what does Richardson do to it?</summary><div class="body">First order: halving h halves the error → ≈1.3 × 10⁻². Richardson's 2y<sub>h/2</sub> − y<sub>h</sub> cancels the O(h) term entirely, leaving O(h²): measured 2.7 × 10⁻⁴, about 100× better.</div></details>
+<details><summary>3 · Why fit the plane with SVD instead of regressing z = ax + by + c?</summary><div class="body">The regression minimizes <em>vertical</em> error and breaks down for near-vertical planes (walls!). SVD minimizes perpendicular distance, works for any orientation, and its σ₃ gives you the rms planarity for free. For the CSE walls, z-regression would be singular.</div></details>
+<details><summary>4 · A plane through the camera origin wins RANSAC with 70k inliers at 2 mm rms. Why should you be suspicious?</summary><div class="body">Suspiciously many inliers at suspiciously low rms usually means a degenerate cluster of identical points. Here: invalid pixels encoded as (0,0,0) — every plane through the origin contains all of them exactly. Real surfaces carry sensor noise; "too perfect" is a bug signature.</div></details>
+<details><summary>5 · How many RANSAC trials do you need if 24% of points are on the table and you want 99% confidence?</summary><div class="body">P(3 random points all on the plane) = 0.24³ ≈ 0.0138. Trials n with (1 − 0.0138)ⁿ ≤ 0.01 → n ≈ log(0.01)/log(0.9862) ≈ 331. Cheap insurance — each trial is just a cross product and a distance count.</div></details>
+<details><summary>6 · After removing the ground, RANSAC returns a "wall" tilted 45°. What probably happened and what's the fix?</summary><div class="body">With the dominant plane gone, two remaining structures can tie, and a 3-point sample straddling both (plus a loose threshold) fits a diagonal compromise. Fixes: more trials, a tighter threshold, and the iterated refit — a straddling plane loses inliers each refit round and collapses to one structure.</div></details>
+</div></details>
+
+<div class="prevnext"><a href="hw2.html">← HW2: Trajectory Interpolation</a><a href="lec7.html">Lecture 7: Integration &amp; ODEs →</a></div>
+
+</div></main>
+</div>
+</body></html>

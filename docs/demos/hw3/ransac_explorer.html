@@ -1,0 +1,114 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>RANSAC Line Fitting</title>
+<style>
+:root{--text-primary:#1f2937;--text-secondary:#4b5563;--text-muted:#9ca3af;--text-success:#15803d;--text-accent:#1d4ed8;--bg-accent:#dbeafe;--border:#e5e7eb;--border-strong:#cbd5e1;--border-accent:#93c5fd;--radius:8px;--bg:#fff;--blue:#378ADD;--pink:#D4537E;--green:#16a34a;--amber:#BA7517}
+@media (prefers-color-scheme:dark){:root{--text-primary:#e5e7eb;--text-secondary:#cbd5e1;--text-muted:#6b7280;--text-success:#4ade80;--text-accent:#93c5fd;--bg-accent:#1e3a8a;--border:#2f2f2f;--border-strong:#4b5563;--border-accent:#3b82f6;--bg:#191919;--blue:#60a5fa;--pink:#f472b6;--green:#4ade80;--amber:#fbbf24}}
+body{margin:0;padding:12px 16px;background:var(--bg);color:var(--text-primary);font:14px/1.5 -apple-system,Segoe UI,Helvetica,Arial,sans-serif;max-width:900px}
+.btns{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:6px}
+.btns button{font:inherit;font-size:13px;padding:4px 10px;border:0.5px solid var(--border-strong);border-radius:var(--radius);background:transparent;color:var(--text-primary);cursor:pointer}
+.btns button.on{background:var(--bg-accent);color:var(--text-accent);border-color:var(--border-accent)}
+.row{display:grid;grid-template-columns:200px 1fr 60px;gap:10px;align-items:center;margin:3px 0;font-size:13px}
+input[type=range]{width:100%}
+#out{font-size:13.5px;margin-top:4px;font-variant-numeric:tabular-nums}
+#cap{font-size:13px;color:var(--text-secondary);margin-top:4px;line-height:1.55}
+</style></head><body>
+<div class="btns">
+<button data-p="0" class="on">synthetic wall + clutter</button><button data-p="1">real table slice (RealSense)</button><button data-p="2">two structures</button>
+<span style="flex:1"></span>
+<button id="go">▶ run 60 trials</button><button id="step">1 trial</button><button id="lsq">naive LSQ on everything</button><button id="peel">peel inliers &amp; refit rest</button></div>
+<div class="row"><span>inlier threshold</span><input type="range" id="th" min="4" max="60" step="2" value="14"><b id="thv"></b></div>
+<svg id="sv" width="100%" viewBox="0 0 860 430"></svg>
+<div id="out"></div>
+<div id="cap"></div>
+<script>
+const REAL=[[491,1301],[311,1236],[445,1385],[202,1067],[195,1071],[163,1057],[114,1157],[300,1263],[133,1116],[293,1268],[10,1249],[482,1327],[326,1197],[-9,1420],[321,1210],[86,1214],[476,1311],[133,1116],[299,1259],[199,1054],[265,1353],[499,1277],[276,1316],[93,1206],[306,1249],[428,1425],[461,1347],[151,1074],[300,1263],[-8,1287],[310,1232],[127,1130],[162,1054],[127,1130],[156,1061],[181,1074],[145,1091],[55,1287],[189,1077],[478,1316],[145,1088],[151,1077],[335,1197],[435,1414],[306,1249],[100,1185],[487,1292],[427,1420],[276,1316],[197,1084],[476,1311],[38,1321],[-28,1420],[120,1138],[282,1301],[314,1214],[327,1201],[-40,1481],[185,1054],[299,1259],[276,1316],[18,1227],[35,1227],[52,1210],[469,1342],[457,1363],[496,1268],[78,1232],[38,1316],[26,1206],[194,1067],[280,1292],[335,1197],[84,1193],[427,1420],[133,1112],[320,1206],[256,1353],[51,1185],[145,1091],[139,1101],[92,1189],[120,1142],[59,1197],[306,1249],[341,1189],[275,1311],[185,1057],[459,1342],[294,1273],[323,1214],[-19,1443],[67,1177],[151,1074],[92,1193],[152,1081],[476,1311],[288,1287],[150,1071],[324,1218],[303,1240],[185,1057],[27,1227],[145,1091],[78,1227],[120,1142],[428,1425],[483,1306],[269,1327],[341,1189],[342,1193],[-9,1420],[451,1374],[113,1153],[336,1201],[441,1402],[445,1385],[100,1185],[93,1206],[50,1173],[288,1287],[287,1282],[483,1306],[263,1342],[1,1396],[100,1185],[492,1282],[487,1292],[29,1353],[20,1358],[306,1249],[480,1297],[127,1127],[188,1071],[461,1347],[194,1067],[86,1218],[424,1443],[-9,1420],[29,1337],[-19,1437],[441,1402],[294,1273],[11,1380],[310,1232],[439,1396],[29,1342],[-40,1487],[93,1201],[306,1249],[20,1358],[35,1206],[317,1227],[163,1057],[-9,1414],[42,1185],[10,1327],[455,1358],[288,1287],[165,1071],[26,1210],[-9,1420],[151,1077],[334,1193],[306,1249],[483,1306],[325,1193],[151,1077],[485,1287],[482,1301],[431,1402],[424,1443],[1,1263],[186,1064],[485,1311],[469,1342],[-8,1277],[437,1391],[86,1214],[469,1342],[133,1112],[93,1206],[428,1425],[305,1245],[114,1157],[287,1282],[156,1061],[46,1301],[447,1391],[113,1153],[435,1414],[347,1181],[93,1197],[38,1316],[305,1245],[107,1173],[93,1197],[194,1067],[20,1353],[78,1232],[276,1316],[-17,1311],[108,1177],[158,1071],[306,1249],[323,1214],[133,1112],[422,1437],[181,1074],[487,1292],[201,1064],[151,1074],[38,1311],[494,1263],[457,1363],[20,1332],[27,1236],[341,1189],[20,1347],[100,1181],[114,1157],[93,1201],[482,1301],[317,1227],[84,1185],[157,1067],[133,1112],[320,1206],[463,1353],[196,1074],[43,1193],[457,1363],[93,1197],[170,1054],[341,1189],[476,1311],[-29,1462],[282,1301],[430,1431],[145,1088],[480,1321],[107,1173],[1,1391],[-38,1408],[336,1201],[463,1353],[63,1259],[335,1197],[177,1054],[298,1254],[269,1327],[459,1342],[20,1374],[46,1292],[311,1236],[487,1292],[164,1067],[311,1236],[156,1061],[305,1245],[11,1374],[138,1094],[42,1189],[197,1081],[68,1193],[483,1306],[107,1173],[107,1173],[306,1249],[476,1311],[463,1353],[498,1273],[427,1420],[100,1185],[70,1240],[311,1236],[66,1173],[323,1214],[414,1443],[55,1282],[162,1054],[465,1358],[473,1327],[35,1232],[289,1292],[316,1223],[455,1358],[120,1142],[335,1197],[-9,1420],[471,1321],[162,1051],[445,1385],[276,1316],[281,1297],[58,1177],[75,1177],[93,1206],[441,1402],[437,1391],[311,1236],[151,1074],[157,1064],[296,1282],[-9,1420],[270,1332],[310,1232],[305,1245],[478,1316],[93,1197],[449,1396],[139,1101],[63,1268],[312,1240],[422,1437],[43,1218],[177,1054],[276,1316],[451,1374],[262,1337],[439,1396],[303,1240],[181,1077],[256,1353],[473,1327],[433,1408],[107,1169],[27,1245],[34,1197],[201,1064],[11,1380],[78,1232],[461,1347],[181,1074],[51,1201],[327,1201],[121,1145],[42,1181],[459,1342],[327,1201],[467,1337],[427,1420],[300,1263],[480,1321],[163,1057],[282,1301],[482,1301],[492,1282],[475,1332],[59,1197],[151,1074],[428,1425],[1,1263],[303,1240],[295,1277],[1,1391],[501,1282],[157,1064],[281,1297],[29,1342],[42,1189],[445,1385],[139,1101],[55,1282],[120,1142],[151,1074],[100,1185],[63,1263],[114,1157],[75,1177],[-48,1402],[44,1227],[480,1321],[181,1074],[313,1245],[164,1064],[447,1391],[491,1277],[491,1277],[47,1311]];
+const sv=document.getElementById('sv');
+const css=v=>`var(--${v})`;
+let preset=0,TH=14,pts=[],best=null,trials=0,anim=null,trialLine=null,removed=null,mode='';
+const rnd=(()=>{let s=42;return()=>{s=(s*1664525+1013904223)>>>0;return s/4294967296}})();
+function makePts(){
+ removed=null;best=null;trials=0;trialLine=null;mode='';const P=[];
+ if(preset===0){ // slanted wall + box clutter
+  for(let i=0;i<120;i++){const t=rnd();P.push([60+t*700,330-t*180+(rnd()-0.5)*14])}
+  for(let i=0;i<80;i++)P.push([200+rnd()*330,60+rnd()*240]);
+ }else if(preset===1){ // real (y,z) slice, mm -> screen
+  for(const[a,b]of REAL)P.push([80+(a+50)/770*720,30+(b-750)/800*380]);
+ }else{ // two walls
+  for(let i=0;i<110;i++){const t=rnd();P.push([80+t*700,120+t*60+(rnd()-0.5)*13])}
+  for(let i=0;i<70;i++){const t=rnd();P.push([150+t*280,370-t*230+(rnd()-0.5)*13])}
+  for(let i=0;i<40;i++)P.push([80+rnd()*700,40+rnd()*360]);
+ }
+ pts=P}
+function dist(L,p){return Math.abs(L.a*p[0]+L.b*p[1]+L.c)}
+function mkLine(p,q){let a=q[1]-p[1],b=p[0]-q[0];const n=Math.hypot(a,b);
+ if(n<1e-9)return null;a/=n;b/=n;return{a,b,c:-(a*p[0]+b*p[1])}}
+function count(L,P){let c=0;for(const p of P)if(dist(L,p)<TH)c++;return c}
+function lsqFit(P){ // total least squares via 2x2 eigen
+ let mx=0,my=0;for(const p of P){mx+=p[0];my+=p[1]}mx/=P.length;my/=P.length;
+ let sxx=0,sxy=0,syy=0;for(const p of P){const u=p[0]-mx,v=p[1]-my;sxx+=u*u;sxy+=u*v;syy+=v*v}
+ const th=0.5*Math.atan2(2*sxy,sxx-syy);const a=-Math.sin(th),b=Math.cos(th);
+ // normal is perpendicular to direction (cos th, sin th)
+ return{a,b,c:-(a*mx+b*my)}}
+function refine(L,P){for(let i=0;i<6;i++){const inl=P.filter(p=>dist(L,p)<TH);
+  if(inl.length<2)break;L=lsqFit(inl)}return L}
+function oneTrial(P){
+ const i=Math.floor(rnd()*P.length);let j=i;while(j===i)j=Math.floor(rnd()*P.length);
+ const L=mkLine(P[i],P[j]);if(!L)return;
+ trialLine={L,i,j};trials++;
+ const c=count(L,P);
+ if(!best||c>best.count)best={L,count:c,sample:[i,j]};}
+function finishBest(P){if(best){best.L=refine(best.L,P);best.count=count(best.L,P)}}
+function lineSeg(L){ // clip ax+by+c=0 to viewbox
+ const pts=[];
+ for(const x of[40,860]){if(Math.abs(L.b)>1e-6){const y=(-L.c-L.a*x)/L.b;if(y>=15&&y<=415)pts.push([x,y])}}
+ for(const y of[20,410]){if(Math.abs(L.a)>1e-6){const x=(-L.c-L.b*y)/L.a;if(x>=40&&x<=860)pts.push([x,y])}}
+ return pts.slice(0,2)}
+function draw(){
+ const P=removed?pts.filter((_,i)=>!removed.has(i)):pts;
+ let s=`<rect x="40" y="15" width="820" height="400" fill="none" stroke="var(--border-strong)" stroke-width="0.5"/>`;
+ // removed points ghost
+ if(removed)for(const i of removed)s+=`<circle cx="${pts[i][0].toFixed(1)}" cy="${pts[i][1].toFixed(1)}" r="2.4" fill="var(--border)"/>`;
+ // band + inliers
+ const col=mode==='lsq'?css('pink'):css('green');
+ if(best){const[p,q]=lineSeg(best.L);
+  if(p&&q){const nx=best.L.a*TH,ny=best.L.b*TH;
+   s+=`<polygon points="${p[0]+nx},${p[1]+ny} ${q[0]+nx},${q[1]+ny} ${q[0]-nx},${q[1]-ny} ${p[0]-nx},${p[1]-ny}" fill="${col}" opacity="0.1"/>`;
+   s+=`<path d="M${p[0]} ${p[1]}L${q[0]} ${q[1]}" stroke="${col}" stroke-width="2.4"${mode==='lsq'?' stroke-dasharray="7 5"':''}/>`}}
+ for(let i=0;i<P.length;i++){const p=P[i];const inl=best&&dist(best.L,p)<TH;
+  s+=`<circle cx="${p[0].toFixed(1)}" cy="${p[1].toFixed(1)}" r="2.6" fill="${inl?col:'var(--text-muted)'}" fill-opacity="${inl?0.9:0.55}"/>`}
+ if(trialLine){const[p,q]=lineSeg(trialLine.L);
+  if(p&&q)s+=`<path d="M${p[0]} ${p[1]}L${q[0]} ${q[1]}" stroke="${css('blue')}" stroke-width="1.3" stroke-dasharray="4 4"/>`;
+  for(const k of[trialLine.i,trialLine.j]){const pt=pts[k];if(!removed||!removed.has(k))s+=`<circle cx="${pt[0]}" cy="${pt[1]}" r="6" fill="none" stroke="${css('blue')}" stroke-width="2"/>`}}
+ if(mode==='lsq'&&best){} // handled via best
+ sv.innerHTML=s;
+ document.getElementById('thv').textContent=TH;
+ const n=P.length;
+ document.getElementById('out').innerHTML= best?
+  (mode==='lsq'?`<b style="color:${css('pink')}">naive LSQ through everything</b> — dragged off the structure by the clutter. Press ▶ to let RANSAC fix it.`
+  :`trials: <b>${trials}</b> · best line keeps <b style="color:${css('green')}">${best.count}/${n}</b> points within ±${TH}px`)
+  :`trials: 0 — each trial picks two random points; the line through them is scored by how many points land in its band`;
+ const caps=['Synthetic: one real wall, 40% clutter. Naive LSQ tilts into the clutter; RANSAC’s best 2-point line snaps to the wall, and the LSQ refit of its inliers polishes it.',
+ 'Real data: a side slice of hw3/TableWithObjects2.asc (y vs depth, mm). The diagonal band is the table; the blobs are the objects on it. Same algorithm, zero tuning beyond the threshold.',
+ 'Two structures: run RANSAC, then "peel inliers & refit rest" — the second line emerges from the leftovers. This is exactly how the CSE building’s ground and walls are extracted in sequence.'];
+ document.getElementById('cap').textContent=caps[preset]}
+function run(n){if(anim)clearInterval(anim);const P=removed?pts.filter((_,i)=>!removed.has(i)):pts;
+ let k=0;anim=setInterval(()=>{oneTrial(P);k++;if(k>=n){clearInterval(anim);anim=null;finishBest(P);trialLine=null}draw()},n>1?28:0)}
+document.querySelectorAll('[data-p]').forEach(b=>b.onclick=()=>{
+ document.querySelectorAll('[data-p]').forEach(x=>x.classList.toggle('on',x===b));
+ preset=+b.dataset.p;if(anim){clearInterval(anim);anim=null}makePts();showLSQ();draw()});
+document.getElementById('go').onclick=()=>{mode='';run(60)};
+document.getElementById('step').onclick=()=>{mode='';run(1)};
+document.getElementById('lsq').onclick=()=>{if(anim){clearInterval(anim);anim=null}
+ const P=removed?pts.filter((_,i)=>!removed.has(i)):pts;
+ best={L:lsqFit(P),count:0};best.count=count(best.L,P);trials=trials||0;trialLine=null;mode='lsq';draw()};
+document.getElementById('peel').onclick=()=>{if(!best)return;
+ removed=removed||new Set();
+ pts.forEach((p,i)=>{if(!removed.has(i)&&dist(best.L,p)<TH)removed.add(i)});
+ best=null;trials=0;trialLine=null;mode='';run(60)};
+document.getElementById('th').oninput=e=>{TH=+e.target.value;if(best)best.count=count(best.L,removed?pts.filter((_,i)=>!removed.has(i)):pts);draw()};
+function showLSQ(){best={L:lsqFit(pts),count:0};best.count=count(best.L,pts);trials=0;trialLine=null;mode='lsq'}
+makePts();showLSQ();draw();
+const __post=()=>parent.postMessage({demoHeight:document.body.scrollHeight+8},'*');
+addEventListener('load',__post);new ResizeObserver(__post).observe(document.body);
+</script></body></html>

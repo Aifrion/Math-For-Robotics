@@ -13,7 +13,8 @@
     { href: 'lec7.html', title: '7 · Integration & ODEs' },
     { href: 'lec8.html', title: '8 · Subspace Methods' },
     { group: 'Homework' },
-    { href: 'hw2.html', title: 'HW2 · Trajectory Interpolation' }
+    { href: 'hw2.html', title: 'HW2 · Trajectory Interpolation' },
+    { href: 'hw3.html', title: 'HW3 · ODEs & Plane Fitting' }
   ];
 
   var here = location.pathname.split('/').pop() || 'index.html';
