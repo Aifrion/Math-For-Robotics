@@ -13,7 +13,7 @@
     { href: 'lec7.html', title: '7 · Integration & ODEs' },
     { href: 'lec8.html', title: '8 · Subspace Methods' },
     { href: 'lec9.html', title: '9 · Calculus of Variations' },
-    { href: 'lec10.html', title: '10 · Spectral Analysis', soon: true },
+    { href: 'lec10.html', title: '10 · Spectral Analysis' },
     { href: 'lec11.html', title: '11 · Regression & Classification', soon: true },
     { href: 'lec12.html', title: '12 · Configuration Space', soon: true },
     { href: 'lec13.html', title: '13 · Planning Algorithms', soon: true },

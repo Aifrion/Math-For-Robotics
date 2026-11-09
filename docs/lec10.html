@@ -1,0 +1,232 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Lecture 10 — Spectral Analysis &amp; Time Series | Math for Robotics</title>
+<link rel="stylesheet" href="assets/site.css">
+<link rel="stylesheet" href="vendor/katex/katex.min.css">
+<script defer src="vendor/katex/katex.min.js"></script>
+<script defer src="vendor/katex/auto-render.min.js"></script>
+<script defer src="assets/site.js"></script>
+</head><body>
+<div class="layout">
+<main><div class="content">
+
+<h1>Lecture 10: Spectral Analysis &amp; Time Series</h1>
+
+<div class="callout summary"><span class="tag">The one-sentence version:</span>
+A sensor stream is a <em>time series</em>; this lecture's toolkit asks "what repeats, how strongly,
+and when?" — correlation finds structure the eye can't see, the Fourier transform sorts it by
+frequency, and the classic traps (aliasing, leakage) come from sampling and cutting, not from
+the signal.
+<br><span class="small muted">CSE 276C, Lecture 10 · spectral handout (A. Lagg, MPS) · Numerical
+Recipes ch. 12–13. All numbers verified in <code>scripts/lec10/verify.py</code>.</span></div>
+
+<div class="toc"><b>Contents</b><ol>
+<li><a href="#zoo">The signal zoo</a></li>
+<li><a href="#moments">Describing a random signal</a></li>
+<li><a href="#acf">Autocorrelation</a></li>
+<li><a href="#psd">Power spectral density</a></li>
+<li><a href="#xcorr">Cross-correlation: find the echo</a></li>
+<li><a href="#sampling">Sampling, Nyquist, aliasing</a></li>
+<li><a href="#fourier">Fourier series &amp; the DFT</a></li>
+<li><a href="#conv">Convolution, deconvolution, Wiener</a></li>
+<li><a href="#leakage">Leakage &amp; windowing</a></li>
+<li><a href="#wavelets">Beyond Fourier: STFT &amp; wavelets</a></li>
+<li><a href="#summary">Summary</a></li>
+</ol></div>
+
+<h2 id="big">The big picture</h2>
+<p>Everything a robot measures arrives as numbers-over-time. Lectures 2–8 mostly treated samples
+as a cloud; this lecture treats the <em>ordering</em> as the information. One mental picture
+carries the whole handout: <b>time domain and frequency domain are two views of the same data</b>,
+connected by the Fourier transform, and correlation functions are the bridge (PSD = Fourier
+transform of the autocorrelation).</p>
+<table>
+<tr><th>robotics problem</th><th>what you compute</th><th>section</th></tr>
+<tr><td>is this vibration the motor (120 Hz) or the propeller (47 Hz)?</td><td>power spectral density</td><td>4</td></tr>
+<tr><td>sonar / UWB ranging: when did the echo come back?</td><td>cross-correlation peak</td><td>5</td></tr>
+<tr><td>how fast must I sample my IMU?</td><td>Nyquist: \(f_s > 2 f_{max}\), filter first</td><td>6</td></tr>
+<tr><td>de-noise / de-blur a sensor stream</td><td>FFT filtering, Wiener</td><td>8</td></tr>
+<tr><td>gait events in a legged robot (when, not just what frequency)</td><td>STFT / wavelets</td><td>10</td></tr>
+</table>
+
+<h2 id="zoo">1 · The signal zoo</h2>
+<p>The handout's taxonomy, worth internalizing because each class has a different spectrum:</p>
+<table>
+<tr><th>class</th><th>example</th><th>spectrum</th></tr>
+<tr><td>sinusoidal</td><td>\(x = X\sin(2\pi f_0 t + \theta)\)</td><td>one line at f₀</td></tr>
+<tr><td>complex periodic</td><td>\(x(t) = x(t \pm nT)\): Fourier series \(\tfrac{a_0}{2} + \sum a_n\cos 2\pi n f_1 t + b_n \sin 2\pi n f_1 t\)</td><td>lines at <em>integer multiples</em> of f₁ = 1/T</td></tr>
+<tr><td>almost periodic</td><td>\(\sin 2t + \sin 3t + \sin\sqrt{50}\,t\) — no common divisor</td><td>lines at <em>incommensurate</em> frequencies; never exactly repeats</td></tr>
+<tr><td>transient</td><td>decaying exponentials, a single pulse</td><td><b>continuous</b> spectrum</td></tr>
+<tr><td>random</td><td>sensor noise</td><td>continuous; described statistically (stationary? ergodic?)</td></tr>
+</table>
+<figure><img src="figures/lec10/01_signal_zoo.svg" alt="Signal classes and their spectra" width="860">
+<figcaption>Fig 1 — down the zoo, spectra fatten: one line → harmonic comb → incommensurate lines → continuous band.</figcaption></figure>
+<p class="small muted"><b>Stationary</b> = the statistics don't drift with time; <b>ergodic</b> =
+one long recording tells you what an ensemble of recordings would (so time averages work). The
+handout assumes both from here on — and so does every practical PSD you'll ever compute.</p>
+
+<h2 id="moments">2 · Describing a random signal</h2>
+$$\mu_x = \lim_{T\to\infty}\tfrac1T\!\int_0^T\! x\,dt,\qquad
+\Psi_x^2 = \lim_{T\to\infty}\tfrac1T\!\int_0^T\! x^2 dt,\qquad
+\sigma_x^2 = \Psi_x^2 - \mu_x^2$$
+<table>
+<tr><th>symbol</th><th>meaning</th></tr>
+<tr><td>\(\mu_x\)</td><td>mean — the static component (a biased gyro's offset)</td></tr>
+<tr><td>\(\Psi_x^2\), rms = \(\sqrt{\Psi_x^2}\)</td><td>mean square — total intensity, DC included</td></tr>
+<tr><td>\(\sigma_x^2\)</td><td>variance — the dynamic component. For a pure sine of amplitude A: \(\Psi^2 = A^2/2\) (verified: 0.8² / 2 = 0.32)</td></tr>
+<tr><td>\(p(x)\)</td><td>probability density — fraction of time spent near each value. A sine's pdf is a bathtub (it lingers at the extremes); noise is a bell.</td></tr>
+</table>
+
+<h2 id="acf">3 · Autocorrelation: does the signal remember itself?</h2>
+$$R_x(\tau) = \lim_{T\to\infty}\frac1T\int_0^T x(t)\,x(t+\tau)\,dt$$
+<p>Multiply the signal by a shifted copy of itself and average: large when the signal at time t
+predicts the signal at time t + τ. Two gifts: \(\Psi_x^2 = R_x(0)\) and \(\mu_x = \sqrt{R_x(\infty)}\)
+(noise decorrelates; only the DC part survives at large lag).</p>
+<details><summary>Worked example: the rectangular pulse (click to open)</summary><div class="body">
+<p>A pulse of height A = 1.5 and width θ = 2 slid across itself overlaps over a window that
+shrinks linearly with |τ|: \(R(\tau) = A^2\theta\,(1 - |\tau|/\theta)\) for |τ| &lt; θ — a
+triangle. Verified numerically: R(0) = 4.5 = A²θ ✓, R(1) = 2.25 ✓, R(1.9) = 0.225 ✓. A box
+correlated with itself is a triangle — remember this; it's also why box-filtering twice gives
+triangular (linear) smoothing.</p></div></details>
+<figure><img src="figures/lec10/02_acf_noise.svg" alt="ACF pulls a sine out of noise" width="860">
+<figcaption>Fig 2 — a 1.5 Hz sine buried in noise (SNR ≈ 0.3). Its autocorrelation shows clean bumps every 0.667 s: noise only matches itself at τ = 0; the signal matches itself every period.</figcaption></figure>
+
+<h2 id="psd">4 · Power spectral density</h2>
+$$G_x(f) = 2\int_{-\infty}^{\infty} R_x(\tau)\, e^{-i 2\pi f \tau}\, d\tau$$
+<p><b>The PSD is the Fourier transform of the autocorrelation.</b> It answers "how much mean-square
+power lives near frequency f": a sine gives a delta spike, narrowband noise a hump, white noise a
+flat line. In practice you estimate it from the FFT directly — the <b>periodogram</b>
+\(P(f_k) = \frac{1}{N^2}\big(|C_k|^2 + |C_{N-k}|^2\big)\).</p>
+<div class="callout key"><span class="tag">💡 Robot diagnosis in one plot:</span> every rotating
+part signs the PSD at its own frequency (and harmonics). Motor imbalance, gear mesh, prop blades —
+you read them off like a barcode, which is why vibration monitoring is PSD monitoring.</div>
+
+<h2 id="xcorr">5 · Cross-correlation: find the echo</h2>
+$$R_{xy}(\tau) = \lim_{T\to\infty}\frac1T\int_0^T x(t)\,y(t+\tau)\,dt,
+\qquad
+R_{xy}(l) = \frac{\sum_k (x_k - \bar x)(y_{k+l} - \bar y)}
+{\sqrt{\sum (x_k-\bar x)^2 \sum (y_k - \bar y)^2}}$$
+<p>Same idea between <em>two</em> signals: slide y over x and score the match at every lag. The
+peak's location is the time delay (ranging!); its height says whether y contains x at all
+(matched detection). Verified: a bump pair delayed 4.00 s with noise at SNR ≈ 2.5 is recovered at
+lag 3.94 s — the handout's own example recovers 4.02.</p>
+<p>🕹️ <b>Try it:</b> slide the received trace by hand, then let the correlogram do all lags at
+once. Preset 2 buries the echo in noise; preset 3 shows what "no relationship" looks like.</p>
+<div class="demo-wrap"><iframe class="demo" src="demos/lec10/delay_finder.html" height="600" title="Cross-correlation delay finder"></iframe></div>
+
+<h2 id="sampling">6 · Sampling, Nyquist, aliasing</h2>
+$$f_c = \frac{1}{2h} \quad\text{(Nyquist / folding frequency, sample spacing } h\text{)}$$
+<p>A sampled sine at frequency f is <em>bit-for-bit identical</em> to one at every frequency that
+folds onto f across multiples of f_s. Verified: 7 Hz sampled at 10 Hz matches a (phase-flipped)
+3 Hz sine at every sample to 10⁻¹⁴, and its DFT peak sits at 3 Hz. Once sampled, the impostor
+cannot be detected — which is why the anti-aliasing filter must act <em>before</em> the ADC.</p>
+<div class="demo-wrap"><iframe class="demo" src="demos/lec10/aliasing_explorer.html" height="560" title="Aliasing explorer"></iframe></div>
+<div class="callout gotcha"><span class="tag">⚠️ Pre-processing the handout insists on:</span>
+<b>trend removal</b> (LSQ-fit a low-order polynomial — Lecture 2 — and subtract it; a drift looks
+like huge low-frequency power and swamps the PSD) and, for irregularly sampled data,
+<b>interpolate onto a regular grid first</b> (Lecture 3 — the FFT requires equal spacing; your
+choice of interpolant changes the effective sampling rate, so choose the new grid deliberately).</div>
+
+<h2 id="fourier">7 · Fourier series &amp; the DFT</h2>
+<p>Any periodic signal is a recipe of harmonics; the coefficients are inner products
+(orthogonality doing the work, as in Lecture 4's Chebyshev sums):</p>
+$$a_q = \frac2T\int_0^T x(t)\cos 2\pi q f_1 t\, dt, \qquad
+b_q = \frac2T\int_0^T x(t)\sin 2\pi q f_1 t\, dt$$
+<p>Sampled at N points the integrals become the sums \(A_q = \frac2N\sum_n x_n \cos\frac{2\pi q n}{N}\)
+etc. (verified to machine precision on a synthetic signal: A₀ = mean, A₂ = 3, B₃ = 1.5, A₃ = 0).
+Computing all of them naively is O(N²) — "inefficient &amp; slow", says the handout — the FFT gets
+O(N log N) and is the reason this whole toolbox is cheap.</p>
+<p>🕹️ <b>Try it:</b> rebuild a bang-bang command from sines and watch the Gibbs horns refuse to die:</p>
+<div class="demo-wrap"><iframe class="demo" src="demos/lec10/fourier_builder.html" height="560" title="Fourier series builder"></iframe></div>
+<p class="small muted">Verified coefficient laws: square wave \(b_q = 4/\pi q\) (odd q) — rms error
+still 0.09 after 49 terms; a triangle's \(1/q^2\) coefficients reach rms 0.001 with 40. Smoothness
+in time = decay in frequency.</p>
+
+<h2 id="conv">8 · Convolution, deconvolution, Wiener</h2>
+$$r * s \;\overset{FT}{\Longleftrightarrow}\; R(f)\,S(f),
+\qquad \text{Corr}(g,h) \;\overset{FT}{\Longleftrightarrow}\; G(f)\,H^*(f),
+\qquad \text{Corr}(g,g) \;\overset{FT}{\Longleftrightarrow}\; |G(f)|^2$$
+<table>
+<tr><th>theorem</th><th>what it buys a robot</th></tr>
+<tr><td>convolution</td><td>filtering = multiply spectra; fast convolution via FFT (zero-pad to kill wrap-around end effects)</td></tr>
+<tr><td>correlation</td><td>the delay-finder of §5 at FFT speed — real-time sonar</td></tr>
+<tr><td>autocorrelation ↔ |G|²</td><td>the PSD, again — the whole toolkit is one transform</td></tr>
+</table>
+<p><b>Deconvolution</b> (undo a sensor's smearing): divide spectra, \( \tilde U = C/R\). With noise
+this explodes — dividing by tiny |R(f)| amplifies noise at exactly the frequencies where you know
+least. The <b>Wiener filter</b> fixes it by weighting each frequency by its signal-to-noise:</p>
+$$\tilde U(f) = \frac{C(f)}{R(f)}\,\Phi(f), \qquad
+\Phi(f) = \frac{|S(f)|^2}{|S(f)|^2 + |N(f)|^2}$$
+<p class="small muted">Measured on a synthetic blur-plus-noise problem: naive inverse MSE ≈ 10¹¹
+(pure noise amplification); Wiener MSE 0.006. Not a typo — eleven orders of magnitude.</p>
+
+<h2 id="leakage">9 · Leakage &amp; windowing</h2>
+<p>The FFT silently assumes your record repeats end-to-end. If the record holds a non-integer
+number of cycles, the artificial seam acts like a discontinuity and smears energy across all
+bins. Verified: 4.0 cycles in a 256-sample record put 100% of the energy in bin 4; 4.5 cycles
+leave only 0.67 in the biggest bin and still 0.016 ten bins away. Multiplying the record by a
+<b>window</b> (Hann \(= \cos^2\), Hamming, Blackman, Gaussian…) that fades the ends to zero cuts
+that far-away skirt ~100× — at the price of a slightly wider main peak.</p>
+<figure><img src="figures/lec10/03_leakage.svg" alt="Leakage and windowing spectra" width="860">
+<figcaption>Fig 3 — log-scale spectra: integer cycles (clean line), half-cycle extra (leakage skirt), and the same record under a Hann window (skirt ~100× lower, peak slightly wider).</figcaption></figure>
+
+<h2 id="wavelets">10 · Beyond Fourier: STFT &amp; wavelets</h2>
+<p>A Fourier magnitude spectrum says <em>what</em> frequencies occurred but not <em>when</em> —
+the handout's demo: 6→4→2→1 Hz played in sequence has nearly the same spectrum as all four at
+once. Fixes:</p>
+<ul>
+<li><b>STFT</b>: FFT a sliding window → a spectrogram (time × frequency). One fixed trade-off:
+narrow window = good time / bad frequency resolution, wide = the reverse (Δf·Δt = const — the
+Heisenberg box).</li>
+<li><b>Wavelets (CWT)</b>: correlate with stretched/compressed copies of a short "mother wavelet"
+(Mexican hat, Morlet): \( \Psi(\tau, s) = \frac{1}{\sqrt{|s|}}\int x(t)\,\psi^*\!\big(\tfrac{t-\tau}{s}\big)dt\).
+Scale replaces frequency, and the resolution <em>adapts</em>: fine time resolution for fast
+transients, fine frequency resolution for slow drifts — exactly the mix a contact event in a
+force signal wants. The DWT discretizes scales into an orthonormal, fast transform.</li>
+</ul>
+
+<h2 id="summary">11 · Summary</h2>
+<ul>
+<li>Classify first: periodic → line spectra; transients/random → continuous spectra; stationary + ergodic is the license for everything practical.</li>
+<li>R(τ) finds self-similarity (period extraction from noise); R_xy(τ) finds delays (ranging) and detections.</li>
+<li>PSD = FT of autocorrelation = |FFT|² (periodogram): the frequency budget of the signal.</li>
+<li>Sample above 2f_max and low-pass <em>before</em> the ADC — after sampling, aliases are undetectable.</li>
+<li>The FFT's assumptions bite: detrend, regularize the grid, window the record.</li>
+<li>Deconvolve with Wiener's SNR weighting, never by bare spectral division.</li>
+<li>When timing matters, trade Fourier's global view for STFT (fixed tiles) or wavelets (adaptive tiles).</li>
+</ul>
+<table>
+<tr><th>tool</th><th>one-line idea</th><th>use it when</th></tr>
+<tr><td>autocorrelation</td><td>signal × shifted self</td><td>find periodicity, estimate μ and Ψ²</td></tr>
+<tr><td>cross-correlation</td><td>signal × shifted other</td><td>delays, echoes, template detection</td></tr>
+<tr><td>FFT / periodogram</td><td>sort energy by frequency</td><td>vibration ID, filtering, fast convolution</td></tr>
+<tr><td>Wiener filter</td><td>divide spectra, weighted by SNR</td><td>de-blur / de-noise with a known response</td></tr>
+<tr><td>window functions</td><td>fade the record's ends</td><td>any finite record whose tones aren't bin-aligned</td></tr>
+<tr><td>STFT / wavelets</td><td>localized transforms</td><td>when <em>when</em> matters, not just <em>what</em></td></tr>
+</table>
+
+<details><summary>⚠️ Typos in the slides to watch out for</summary><div class="body"><ul>
+<li>Mean-square-values slide: "<b>rout</b> mean square value" → root mean square.</li>
+<li>Transient-data slide, rectangular pulse: the zero branch condition is printed "c &lt; t &lt; 0" — should be t &lt; 0 or t &gt; c (as printed it's an empty set).</li>
+<li>Irregular-grid slide: "<b>inear</b> interpolation between y_k and y_{k+1}" → linear.</li>
+<li>Noise-removal slides: "<b>transorm</b> back to time domain" → transform; "Fourier Trans<b>orm</b> on irregular gridded data" → Transform.</li>
+<li>Literature slide: "Numerical Recip<b>ies</b>" → Recipes.</li>
+<li>Wavelet slides: "contin<b>ous</b> wavelet transform" → continuous; "'let'" derivation on the mother-wavelet slide maps "compactly supported" to <em>-let</em> ("small"), i.e. small wave — the slide's quote marks garble it.</li>
+<li>Hann window formula appears as \(w(t) = \cos^2(\pi t/2)\) on t ∈ [−1,1] — fine, but note the Hamming formula beside it, \(0.54 + 0.46\cos(\pi t)\), uses the same convention; on sample index n ∈ [0, N) both become the familiar \(0.5 - 0.5\cos(2\pi n/N)\) / \(0.54 - 0.46\cos(2\pi n/N)\). Mixing the two conventions is the classic off-by-half-period bug.</li>
+</ul></div></details>
+
+<details><summary>🧠 Self-check questions</summary><div class="body">
+<details><summary>1 · Your quadrotor logs an accelerometer at 200 Hz, and the props spin at 150 Hz. What does the PSD show?</summary><div class="body">150 Hz is above Nyquist (100 Hz): it folds to |150 − 200| = 50 Hz. You'd blame a phantom 50 Hz source. Fix in hardware: analog low-pass before sampling — in software it's already too late.</div></details>
+<details><summary>2 · Why does autocorrelation beat "just look at the FFT" for finding a weak periodicity?</summary><div class="body">It doesn't, fundamentally — the PSD <em>is</em> the FT of R(τ), same information. But R(τ) reads directly in time units (a bump at the period), needs no windowing judgment, and its τ = 0 value calibrates total power. Use whichever domain makes the feature obvious.</div></details>
+<details><summary>3 · A box pulse's ACF is a triangle. What is the ACF's width, and what does the ACF of white noise look like?</summary><div class="body">The triangle spans |τ| &lt; θ (twice the pulse width, peak A²θ at 0). White noise: a single spike at τ = 0 and ~0 elsewhere — no memory at all. Every real sensor sits between those extremes, and its correlation time tells you how fast it forgets.</div></details>
+<details><summary>4 · You FFT a 1-second record of a 10.5 Hz tone. What do you see, and what are your two fixes?</summary><div class="body">Leakage: 10.5 cycles isn't integer, so energy smears (peak bin only ~0.67 of the amplitude, skirt everywhere). Fix 1: window (Hann) to crush the skirt ~100×. Fix 2: change the record length so the tone is bin-aligned (e.g. 2 s → 21 cycles exactly).</div></details>
+<details><summary>5 · Deconvolution divides by R(f). Where exactly does the noise blow-up come from, and what does Wiener's Φ do at those frequencies?</summary><div class="body">Wherever |R(f)| ≈ 0 the division multiplies the (flat-ish) noise by a huge factor. There the true signal content |S|² is also tiny, so Φ = |S|²/(|S|²+|N|²) → 0: Wiener simply refuses to reconstruct frequencies the measurement never carried. (Measured: naive MSE 10¹¹ vs Wiener 0.006.)</div></details>
+<details><summary>6 · When is an STFT the wrong tool and a wavelet transform the right one?</summary><div class="body">When the signal mixes fast transients with slow structure — a foot-strike spike riding on a 1 Hz gait. STFT forces one window width for both (Δf·Δt fixed per tile, same tile everywhere); CWT gives short-scale wavelets fine time localization and long-scale ones fine frequency resolution, in one transform.</div></details>
+</div></details>
+
+<div class="prevnext"><a href="lec9.html">← Lecture 9: Calculus of Variations</a><span class="muted">Lecture 11: Regression &amp; Classification (soon)</span></div>
+
+</div></main>
+</div>
+</body></html>

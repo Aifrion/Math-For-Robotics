@@ -1,0 +1,78 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Fourier Series Builder</title>
+<style>
+:root{--text-primary:#1f2937;--text-secondary:#4b5563;--text-muted:#9ca3af;--text-success:#15803d;--text-accent:#1d4ed8;--bg-accent:#dbeafe;--border:#e5e7eb;--border-strong:#cbd5e1;--border-accent:#93c5fd;--radius:8px;--bg:#fff;--blue:#378ADD;--pink:#D4537E;--green:#16a34a;--amber:#BA7517}
+@media (prefers-color-scheme:dark){:root{--text-primary:#e5e7eb;--text-secondary:#cbd5e1;--text-muted:#6b7280;--text-success:#4ade80;--text-accent:#93c5fd;--bg-accent:#1e3a8a;--border:#2f2f2f;--border-strong:#4b5563;--border-accent:#3b82f6;--bg:#191919;--blue:#60a5fa;--pink:#f472b6;--green:#4ade80;--amber:#fbbf24}}
+body{margin:0;padding:12px 16px;background:var(--bg);color:var(--text-primary);font:14px/1.5 -apple-system,Segoe UI,Helvetica,Arial,sans-serif;max-width:900px}
+.btns{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:6px}
+.btns button{font:inherit;font-size:13px;padding:4px 10px;border:0.5px solid var(--border-strong);border-radius:var(--radius);background:transparent;color:var(--text-primary);cursor:pointer}
+.btns button.on{background:var(--bg-accent);color:var(--text-accent);border-color:var(--border-accent)}
+.row{display:grid;grid-template-columns:200px 1fr 60px;gap:10px;align-items:center;margin:3px 0;font-size:13px}
+input[type=range]{width:100%}
+#out{font-size:13.5px;margin-top:4px;font-variant-numeric:tabular-nums}
+#cap{font-size:13px;color:var(--text-secondary);margin-top:4px;line-height:1.55}
+</style></head><body>
+<div class="btns"><button data-w="0" class="on">square (bang-bang command)</button><button data-w="1">triangle</button><button data-w="2">sawtooth</button></div>
+<div class="row"><span>harmonics kept</span><input type="range" id="n" min="1" max="40" step="1" value="3"><b id="nv"></b></div>
+<svg id="sv" width="100%" viewBox="0 0 860 430"></svg>
+<div id="out"></div>
+<div id="cap"></div>
+<script>
+// Fourier series: square b_q = 4/(pi q) odd q; triangle a_q = -8/(pi^2 q^2)
+// odd q (cos form); sawtooth b_q = -2/(pi q) all q.
+let w=0,NH=3;
+const sv=document.getElementById('sv');
+const css=v=>`var(--${v})`;
+const names=['square','triangle','sawtooth'];
+function target(x){ // x in [0,1)
+ if(w===0)return x<0.5?1:-1;
+ if(w===1)return x<0.5?1-4*x:4*x-3;
+ return 1-2*x}
+function coef(q){ // returns [a_q, b_q]
+ if(w===0)return [0, q%2?4/(Math.PI*q):0];
+ if(w===1)return [q%2?8/(Math.PI*Math.PI*q*q):0, 0];
+ return [0, 2/(Math.PI*q)]}
+function series(x,n){let s=0;
+ for(let q=1;q<=n;q++){const[a,b]=coef(q);
+  s+=a*Math.cos(2*Math.PI*q*x)+b*Math.sin(2*Math.PI*q*x)}
+ return s}
+const L=52,T=16,W=520,Hh=300;
+const X=v=>L+v*W, Y=v=>T+Hh/2-(v/1.6)*(Hh/2);
+function draw(){
+ document.getElementById('nv').textContent=NH;
+ let s=`<path d="M${L} ${Y(0)}H${L+W}" stroke="var(--text-muted)" stroke-width="0.7"/>`;
+ s+=`<rect x="${L}" y="${T}" width="${W}" height="${Hh}" fill="none" stroke="var(--border-strong)" stroke-width="0.5"/>`;
+ let dt='',ds='';
+ for(let i=0;i<=600;i++){const x=i/600;
+  dt+=(i?'L':'M')+X(x).toFixed(1)+' '+Y(target(x)).toFixed(1);
+  ds+=(i?'L':'M')+X(x).toFixed(1)+' '+Y(series(x,NH)).toFixed(1)}
+ s+=`<path d="${dt}" stroke="var(--text-muted)" stroke-width="1.8" stroke-dasharray="5 4" fill="none"/>`;
+ s+=`<path d="${ds}" stroke="${css('blue')}" stroke-width="2.4" fill="none"/>`;
+ // spectrum bars
+ const BX=620,BW=210,BB=T+Hh;
+ s+=`<text x="${BX+BW/2}" y="${T+4}" text-anchor="middle" style="font-size:12px;font-weight:600;fill:var(--text-primary)">|coefficient| per harmonic</text>`;
+ for(let q=1;q<=20;q++){const[a,b]=coef(q);const m=Math.hypot(a,b);
+  const h=m/1.4*(Hh-40);
+  const on=q<=NH;
+  s+=`<rect x="${BX+(q-1)*BW/20}" y="${BB-h}" width="${BW/20-2}" height="${h}" fill="${on?css('pink'):'var(--border)'}" rx="1"/>`}
+ s+=`<text x="${BX}" y="${BB+16}" style="font-size:11px;fill:var(--text-muted)">q=1</text>`;
+ s+=`<text x="${BX+BW}" y="${BB+16}" text-anchor="end" style="font-size:11px;fill:var(--text-muted)">q=20</text>`;
+ sv.innerHTML=s;
+ // rms error
+ let e=0;const S=400;
+ for(let i=0;i<S;i++){const x=(i+0.5)/S;const d=series(x,NH)-target(x);e+=d*d}
+ e=Math.sqrt(e/S);
+ const dec=w===1?'1/q² — smooth corners, fast convergence':'1/q — jump discontinuity, slow convergence + Gibbs horns';
+ document.getElementById('out').innerHTML=`${NH} harmonic${NH>1?'s':''}: rms error = <b style="color:${css('blue')}">${e.toFixed(4)}</b> · coefficients decay like <b>${dec}</b>`;
+ document.getElementById('cap').textContent= w===0?
+  'A bang-bang motor command rebuilt from sines. The overshoot horns at each jump never shrink below ~9% no matter how many terms you add (Gibbs phenomenon) — they just get thinner. Moral: discontinuities cost infinite bandwidth; real actuators (low-pass systems) will round them for you whether you like it or not.'
+  :w===1?'The triangle’s corners are only a slope discontinuity, so coefficients die like 1/q² and a handful of terms already hug the curve. Smoothness in time = decay in frequency: each extra derivative of smoothness buys one more power of 1/q.'
+  :'The sawtooth (e.g. a wrapping encoder angle) has one jump per period — 1/q decay and Gibbs horns again. Unwrap the angle before you ever FFT it.'}
+document.querySelectorAll('[data-w]').forEach(b=>b.onclick=()=>{
+ document.querySelectorAll('[data-w]').forEach(z=>z.classList.toggle('on',z===b));w=+b.dataset.w;draw()});
+document.getElementById('n').oninput=e=>{NH=+e.target.value;draw()};
+draw();
+const __post=()=>parent.postMessage({demoHeight:document.body.scrollHeight+8},'*');
+addEventListener('load',__post);new ResizeObserver(__post).observe(document.body);
+</script></body></html>

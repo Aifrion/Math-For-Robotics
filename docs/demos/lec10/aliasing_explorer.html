@@ -1,0 +1,82 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Aliasing Explorer</title>
+<style>
+:root{--text-primary:#1f2937;--text-secondary:#4b5563;--text-muted:#9ca3af;--text-success:#15803d;--text-accent:#1d4ed8;--bg-accent:#dbeafe;--border:#e5e7eb;--border-strong:#cbd5e1;--border-accent:#93c5fd;--radius:8px;--bg:#fff;--blue:#378ADD;--pink:#D4537E;--green:#16a34a;--amber:#BA7517}
+@media (prefers-color-scheme:dark){:root{--text-primary:#e5e7eb;--text-secondary:#cbd5e1;--text-muted:#6b7280;--text-success:#4ade80;--text-accent:#93c5fd;--bg-accent:#1e3a8a;--border:#2f2f2f;--border-strong:#4b5563;--border-accent:#3b82f6;--bg:#191919;--blue:#60a5fa;--pink:#f472b6;--green:#4ade80;--amber:#fbbf24}}
+body{margin:0;padding:12px 16px;background:var(--bg);color:var(--text-primary);font:14px/1.5 -apple-system,Segoe UI,Helvetica,Arial,sans-serif;max-width:900px}
+.btns{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:6px}
+.btns button{font:inherit;font-size:13px;padding:4px 10px;border:0.5px solid var(--border-strong);border-radius:var(--radius);background:transparent;color:var(--text-primary);cursor:pointer}
+.btns button.on{background:var(--bg-accent);color:var(--text-accent);border-color:var(--border-accent)}
+.row{display:grid;grid-template-columns:230px 1fr 70px;gap:10px;align-items:center;margin:3px 0;font-size:13px}
+input[type=range]{width:100%}
+#out{font-size:13.5px;margin-top:4px;font-variant-numeric:tabular-nums}
+#cap{font-size:13px;color:var(--text-secondary);margin-top:4px;line-height:1.55}
+</style></head><body>
+<div class="btns"><span style="font-size:13px;color:var(--text-secondary);align-self:center">presets:</span>
+<button data-p="0">safe (f &lt; f_c)</button><button data-p="1" class="on">7 Hz @ 10 Hz → fake 3 Hz</button><button data-p="2">wheel looks stopped</button></div>
+<div class="row"><span>true signal frequency f</span><input type="range" id="f" min="0.5" max="14" step="0.1" value="7"><b id="fv"></b></div>
+<div class="row"><span>sampling rate f_s</span><input type="range" id="fs" min="4" max="24" step="0.5" value="10"><b id="fsv"></b></div>
+<svg id="sv" width="100%" viewBox="0 0 860 400"></svg>
+<div id="out"></div>
+<div id="cap"></div>
+<script>
+// What the samples of a sine at f, taken every 1/fs, look like:
+// indistinguishable from the alias frequency folded into [0, fs/2].
+let f=7, fs=10;
+const sv=document.getElementById('sv');
+const css=v=>`var(--${v})`;
+const L=52,T=16,W=780,Hh=250,DUR=2.0;
+const X=v=>L+v/DUR*W, Y=v=>T+Hh/2-v*(Hh/2-14);
+function alias(f,fs){ // fold f into [0, fs/2]
+ let a=f%fs; if(a>fs/2)a=fs-a; return a}
+function draw(){
+ document.getElementById('fv').textContent=f.toFixed(1)+' Hz';
+ document.getElementById('fsv').textContent=fs.toFixed(1)+' Hz';
+ const fa=alias(f,fs);
+ let s=`<path d="M${L} ${Y(0)}H${L+W}" stroke="var(--text-muted)" stroke-width="0.7"/>`;
+ // true signal
+ let d='';for(let i=0;i<=1200;i++){const t=i/1200*DUR;d+=(i?'L':'M')+X(t).toFixed(1)+' '+Y(Math.sin(2*Math.PI*f*t)).toFixed(1)}
+ s+=`<path d="${d}" stroke="var(--text-muted)" stroke-width="1.3" fill="none"/>`;
+ // alias reconstruction
+ const aliased=Math.abs(fa-f)>0.051;
+ if(aliased){let d2='';
+  // phase: samples of sin(2pi f t) match sin(2pi fa t) possibly sign-flipped
+  const flip=((Math.round((f-fa)/fs)*fs-f+fa)===0)?1:1;
+  const sgn=(Math.abs((f+fa)%fs)<1e-9)?-1:1;
+  for(let i=0;i<=1200;i++){const t=i/1200*DUR;d2+=(i?'L':'M')+X(t).toFixed(1)+' '+Y(sgn*Math.sin(2*Math.PI*fa*t)).toFixed(1)}
+  s+=`<path d="${d2}" stroke="${css('pink')}" stroke-width="2.4" fill="none"/>`}
+ // samples
+ for(let k=0;k*1/fs<=DUR;k++){const t=k/fs;const v=Math.sin(2*Math.PI*f*t);
+  s+=`<path d="M${X(t)} ${Y(0)}V${Y(v)}" stroke="${css('blue')}" stroke-width="1"/>`;
+  s+=`<circle cx="${X(t)}" cy="${Y(v)}" r="4" fill="${css('blue')}"/>`}
+ // frequency axis strip
+ const FY=T+Hh+58, FW=W, fmax=24;
+ const FX=v=>L+v/fmax*FW;
+ s+=`<path d="M${L} ${FY}H${L+FW}" stroke="var(--border-strong)" stroke-width="1"/>`;
+ for(const t of[0,5,10,15,20])s+=`<text x="${FX(t)}" y="${FY+18}" text-anchor="middle" style="font-size:11px;fill:var(--text-muted)">${t}</text><path d="M${FX(t)} ${FY}v4" stroke="var(--border-strong)"/>`;
+ s+=`<rect x="${FX(0)}" y="${FY-34}" width="${FX(fs/2)-FX(0)}" height="34" fill="${css('green')}" opacity="0.10"/>`;
+ s+=`<path d="M${FX(fs/2)} ${FY-38}V${FY}" stroke="${css('green')}" stroke-width="1.6" stroke-dasharray="4 3"/>`;
+ s+=`<text x="${FX(fs/2)}" y="${FY-42}" text-anchor="middle" style="font-size:11px;fill:${css('green')};font-weight:600">f_c = f_s/2 = ${(fs/2).toFixed(1)}</text>`;
+ s+=`<path d="M${FX(f)} ${FY-26}V${FY}" stroke="var(--text-primary)" stroke-width="2.5"/>`;
+ s+=`<text x="${FX(f)}" y="${FY-29}" text-anchor="middle" style="font-size:11px;fill:var(--text-primary)">true f</text>`;
+ if(aliased){s+=`<path d="M${FX(fa)} ${FY-26}V${FY}" stroke="${css('pink')}" stroke-width="2.5"/>`;
+  s+=`<text x="${FX(fa)}" y="${FY-29}" text-anchor="middle" style="font-size:11px;fill:${css('pink')};font-weight:600">appears at ${fa.toFixed(1)}</text>`;
+  // fold arrow
+  s+=`<path d="M${FX(f)} ${FY+28}Q${FX((f+fa)/2)} ${FY+46} ${FX(fa)} ${FY+28}" stroke="${css('pink')}" stroke-width="1.2" fill="none" stroke-dasharray="3 3"/>`}
+ sv.innerHTML=s;
+ document.getElementById('out').innerHTML= aliased?
+  `f = ${f.toFixed(1)} Hz &gt; f_c = ${(fs/2).toFixed(1)} Hz → the samples are <b>identical</b> to a <b style="color:${css('pink')}">${fa.toFixed(1)} Hz</b> signal. The data cannot tell them apart.`
+  :`f = ${f.toFixed(1)} Hz ≤ f_c = ${(fs/2).toFixed(1)} Hz <span style="color:var(--text-success)">✓ safely inside the Nyquist band — the samples determine the sine uniquely.</span>`;
+ document.getElementById('cap').textContent='Gray: the real signal. Blue dots: what your ADC actually records at f_s. Pink: the impostor frequency the samples equally describe — every frequency outside [0, f_s/2] folds back inside (bottom strip). Anti-aliasing = low-pass filter BEFORE sampling, because after sampling the impostor is indistinguishable from the real thing.'}
+const PRE=[[3,10],[7,10],[10,10.5]];
+document.querySelectorAll('[data-p]').forEach(b=>b.onclick=()=>{
+ document.querySelectorAll('[data-p]').forEach(z=>z.classList.toggle('on',z===b));
+ [f,fs]=PRE[+b.dataset.p];
+ document.getElementById('f').value=f;document.getElementById('fs').value=fs;draw()});
+document.getElementById('f').oninput=e=>{f=+e.target.value;draw()};
+document.getElementById('fs').oninput=e=>{fs=+e.target.value;draw()};
+draw();
+const __post=()=>parent.postMessage({demoHeight:document.body.scrollHeight+8},'*');
+addEventListener('load',__post);new ResizeObserver(__post).observe(document.body);
+</script></body></html>

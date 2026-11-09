@@ -1,0 +1,92 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Cross-Correlation Delay Finder</title>
+<style>
+:root{--text-primary:#1f2937;--text-secondary:#4b5563;--text-muted:#9ca3af;--text-success:#15803d;--text-accent:#1d4ed8;--bg-accent:#dbeafe;--border:#e5e7eb;--border-strong:#cbd5e1;--border-accent:#93c5fd;--radius:8px;--bg:#fff;--blue:#378ADD;--pink:#D4537E;--green:#16a34a;--amber:#BA7517}
+@media (prefers-color-scheme:dark){:root{--text-primary:#e5e7eb;--text-secondary:#cbd5e1;--text-muted:#6b7280;--text-success:#4ade80;--text-accent:#93c5fd;--bg-accent:#1e3a8a;--border:#2f2f2f;--border-strong:#4b5563;--border-accent:#3b82f6;--bg:#191919;--blue:#60a5fa;--pink:#f472b6;--green:#4ade80;--amber:#fbbf24}}
+body{margin:0;padding:12px 16px;background:var(--bg);color:var(--text-primary);font:14px/1.5 -apple-system,Segoe UI,Helvetica,Arial,sans-serif;max-width:900px}
+.btns{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:6px}
+.btns button{font:inherit;font-size:13px;padding:4px 10px;border:0.5px solid var(--border-strong);border-radius:var(--radius);background:transparent;color:var(--text-primary);cursor:pointer}
+.btns button.on{background:var(--bg-accent);color:var(--text-accent);border-color:var(--border-accent)}
+.row{display:grid;grid-template-columns:230px 1fr 70px;gap:10px;align-items:center;margin:3px 0;font-size:13px}
+input[type=range]{width:100%}
+#out{font-size:13.5px;margin-top:4px;font-variant-numeric:tabular-nums}
+#cap{font-size:13px;color:var(--text-secondary);margin-top:4px;line-height:1.55}
+</style></head><body>
+<div class="btns"><button data-p="0" class="on">sonar echo</button><button data-p="1">drowning in noise</button><button data-p="2">unrelated signals</button>
+<span style="flex:1"></span><button id="re">🎲 new noise</button></div>
+<div class="row"><span>slide the copy: lag τ</span><input type="range" id="lag" min="0" max="8" step="0.02" value="0"><b id="lv"></b></div>
+<svg id="sv" width="100%" viewBox="0 0 860 460"></svg>
+<div id="out"></div>
+<div id="cap"></div>
+<script>
+// R_xy(l) = normalized cross-correlation; peak location = time delay.
+let preset=0, lag=0, seed=1;
+const sv=document.getElementById('sv');
+const css=v=>`var(--${v})`;
+const FS=40, DUR=10, N=FS*DUR, TRUE=4.0;
+function rnd(){seed=(seed*1664525+1013904223)>>>0;return seed/4294967296-0.5}
+let xa=[],xb=[],cc=[],best=0;
+function bump(t,c,w){return Math.exp(-0.5*((t-c)/w)**2)}
+function make(){
+ xa=[];xb=[];
+ const nz=preset===1?0.55:preset===0?0.25:0.3;
+ for(let i=0;i<N;i++){const t=i/FS;
+  const sig=bump(t,2.0,0.35)+0.6*bump(t,2.9,0.25);
+  const sig2=preset===2?0:bump(t,2.0+TRUE,0.35)+0.6*bump(t,2.9+TRUE,0.25);
+  xa.push(sig+nz*2*rnd());
+  xb.push(sig2+nz*2*rnd())}
+ // normalized cross-correlation for lags 0..8s
+ cc=[];const ma=xa.reduce((p,c)=>p+c,0)/N, mb=xb.reduce((p,c)=>p+c,0)/N;
+ let va=0,vb=0;for(let i=0;i<N;i++){va+=(xa[i]-ma)**2;vb+=(xb[i]-mb)**2}
+ for(let l=0;l<=8*FS;l++){let s=0;
+  for(let i=0;i+l<N;i++)s+=(xa[i]-ma)*(xb[i+l]-mb);
+  cc.push(s/Math.sqrt(va*vb))}
+ best=cc.indexOf(Math.max(...cc))/FS}
+const L=52,W=780;
+function draw(){
+ document.getElementById('lv').textContent=lag.toFixed(2)+' s';
+ const X=t=>L+t/DUR*W;
+ let s='';
+ // panel A: signal A and shifted copy of B
+ const YA=v=>80-v*34;
+ s+=`<text x="${L}" y="20" style="font-size:12px;fill:var(--text-primary);font-weight:600">signal A (sent)  +  signal B (received) slid left by τ</text>`;
+ let da='';for(let i=0;i<N;i++)da+=(i?'L':'M')+X(i/FS).toFixed(1)+' '+YA(xa[i]).toFixed(1);
+ s+=`<path d="${da}" stroke="${css('blue')}" stroke-width="1.5" fill="none"/>`;
+ let db='';let started=false;
+ for(let i=0;i<N;i++){const t=i/FS-lag;if(t<0)continue;
+  db+=(started?'L':'M')+X(t).toFixed(1)+' '+YA(xb[i]-2.4).toFixed(1);started=true}
+ s+=`<path d="${db}" stroke="${css('pink')}" stroke-width="1.5" fill="none"/>`;
+ // overlap score at this lag
+ const li=Math.round(lag*FS), r=cc[Math.min(li,cc.length-1)];
+ // panel B: correlogram
+ const CY=330, CH=130;
+ const Yc=v=>CY-v*CH*0.85;
+ s+=`<text x="${L}" y="${CY-CH-14}" style="font-size:12px;fill:var(--text-primary);font-weight:600">cross-correlation R(τ) — the matchiness score at every slide</text>`;
+ s+=`<path d="M${L} ${Yc(0)}H${L+W*0.8}" stroke="var(--text-muted)" stroke-width="0.7"/>`;
+ let dc='';for(let l=0;l<cc.length;l++)dc+=(l?'L':'M')+(L+(l/FS)/DUR*W).toFixed(1)+' '+Yc(cc[l]).toFixed(1);
+ s+=`<path d="${dc}" stroke="${css('green')}" stroke-width="2" fill="none"/>`;
+ s+=`<circle cx="${L+lag/DUR*W}" cy="${Yc(r)}" r="6" fill="${css('amber')}"/>`;
+ const pk=Math.max(...cc);
+ if(pk>0.35){s+=`<path d="M${L+best/DUR*W} ${Yc(pk)-8}V${Yc(0)}" stroke="${css('green')}" stroke-width="1" stroke-dasharray="3 3"/>`;
+  s+=`<text x="${L+best/DUR*W}" y="${Yc(pk)-14}" text-anchor="middle" style="font-size:11.5px;fill:${css('green')};font-weight:600">peak at τ = ${best.toFixed(2)} s</text>`}
+ for(const t of[0,2,4,6,8])s+=`<text x="${L+t/DUR*W}" y="${CY+18}" text-anchor="middle" style="font-size:11px;fill:var(--text-muted)">${t}</text>`;
+ s+=`<text x="${L+W*0.42}" y="${CY+34}" text-anchor="middle" style="font-size:11px;fill:var(--text-muted)">lag τ (s)</text>`;
+ sv.innerHTML=s;
+ document.getElementById('out').innerHTML=
+  `at your τ = ${lag.toFixed(2)} s: R = <b style="color:${css('amber')}">${r.toFixed(3).replace('-','−')}</b>`+
+  (pk>0.35?` · automatic answer: <b style="color:${css('green')}">delay = ${best.toFixed(2)} s</b>${preset<2?' (truth: 4.00 s)':''}`:
+   ` · best anywhere: ${pk.toFixed(2)} — <b style="color:${css('pink')}">no convincing match at any lag</b>`);
+ const caps=['A sonar ping and its echo: slide the received trace until it clicks into place — the correlogram does that search for every lag at once. distance = delay × speed of sound / 2.',
+ 'Same echo, SNR ≈ 0.4: your eye struggles, but the noise averages itself out inside the correlation sum while the aligned signal adds up coherently. The peak survives.',
+ 'Two unrelated signals: R(τ) stays small at every lag. A LOW peak is information too — it tells you B is not a delayed copy of A (no echo, no causal link at any delay).'];
+ document.getElementById('cap').textContent=caps[preset]}
+document.querySelectorAll('[data-p]').forEach(b=>b.onclick=()=>{
+ document.querySelectorAll('[data-p]').forEach(z=>z.classList.toggle('on',z===b));
+ preset=+b.dataset.p;make();draw()});
+document.getElementById('re').onclick=()=>{make();draw()};
+document.getElementById('lag').oninput=e=>{lag=+e.target.value;draw()};
+make();draw();
+const __post=()=>parent.postMessage({demoHeight:document.body.scrollHeight+8},'*');
+addEventListener('load',__post);new ResizeObserver(__post).observe(document.body);
+</script></body></html>
