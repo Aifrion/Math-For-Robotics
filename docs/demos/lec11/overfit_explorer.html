@@ -1,0 +1,88 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Overfit Explorer</title>
+<style>
+:root{--text-primary:#1f2937;--text-secondary:#4b5563;--text-muted:#9ca3af;--text-success:#15803d;--text-accent:#1d4ed8;--bg-accent:#dbeafe;--border:#e5e7eb;--border-strong:#cbd5e1;--border-accent:#93c5fd;--radius:8px;--bg:#fff;--blue:#378ADD;--pink:#D4537E;--green:#16a34a;--amber:#BA7517;--orange:#ea580c}
+@media (prefers-color-scheme:dark){:root{--text-primary:#e5e7eb;--text-secondary:#cbd5e1;--text-muted:#6b7280;--text-success:#4ade80;--text-accent:#93c5fd;--bg-accent:#1e3a8a;--border:#2f2f2f;--border-strong:#4b5563;--border-accent:#3b82f6;--bg:#191919;--blue:#60a5fa;--pink:#f472b6;--green:#4ade80;--amber:#fbbf24;--orange:#fb923c}}
+body{margin:0;padding:12px 16px;background:var(--bg);color:var(--text-primary);font:14px/1.5 -apple-system,Segoe UI,Helvetica,Arial,sans-serif;max-width:900px}
+.row{display:grid;grid-template-columns:230px 1fr 90px;gap:10px;align-items:center;margin:3px 0;font-size:13px}
+input[type=range]{width:100%}
+.btns{display:flex;gap:6px;flex-wrap:wrap;margin:4px 0}
+.btns button{font:inherit;font-size:13px;padding:4px 10px;border:0.5px solid var(--border-strong);border-radius:var(--radius);background:transparent;color:var(--text-primary);cursor:pointer}
+#out{font-size:13.5px;margin-top:4px;font-variant-numeric:tabular-nums}
+#cap{font-size:13px;color:var(--text-secondary);margin-top:4px;line-height:1.55}
+</style></head><body>
+<div class="row"><span>model capacity M (degree)</span><input type="range" id="m" min="0" max="9" step="1" value="3"><b id="mv"></b></div>
+<div class="row"><span>regularization log₁₀ λ</span><input type="range" id="l" min="-12" max="2" step="0.5" value="-12"><b id="lv"></b></div>
+<div class="btns"><button id="re">🎲 new noise</button><span style="font-size:13px;color:var(--text-secondary);align-self:center">10 train points (amber) of sin(2πx) + noise · test = the true curve</span></div>
+<svg id="sv" width="100%" viewBox="0 0 860 400"></svg>
+<div id="out"></div>
+<div id="cap"></div>
+<script>
+// Ridge polynomial regression: w = (lambda I + P'P)^-1 P't
+let M=3, LL=-12, seed=11;
+function rnd(){seed=(seed*1664525+1013904223)>>>0;return seed/4294967296}
+function gauss(){return Math.sqrt(-2*Math.log(rnd()+1e-12))*Math.cos(2*Math.PI*rnd())}
+let xs=[],ts=[];
+function make(){xs=[];ts=[];
+ for(let i=0;i<10;i++){const x=i/9;xs.push(x);ts.push(Math.sin(2*Math.PI*x)+0.25*gauss())}}
+function solve(Mdeg,lam){
+ const n=Mdeg+1;
+ const A=Array.from({length:n},()=>new Array(n).fill(0));
+ const b=new Array(n).fill(0);
+ for(let k=0;k<xs.length;k++){
+  const ph=[];let v=1;for(let j=0;j<n;j++){ph.push(v);v*=xs[k]}
+  for(let i=0;i<n;i++){b[i]+=ph[i]*ts[k];
+   for(let j=0;j<n;j++)A[i][j]+=ph[i]*ph[j]}}
+ for(let i=0;i<n;i++)A[i][i]+=lam;
+ // gaussian elimination w/ partial pivot
+ const w=new Array(n).fill(0);
+ for(let c=0;c<n;c++){let p=c;
+  for(let r=c+1;r<n;r++)if(Math.abs(A[r][c])>Math.abs(A[p][c]))p=r;
+  [A[c],A[p]]=[A[p],A[c]];[b[c],b[p]]=[b[p],b[c]];
+  for(let r=c+1;r<n;r++){const f=A[r][c]/A[c][c];
+   for(let j=c;j<n;j++)A[r][j]-=f*A[c][j];b[r]-=f*b[c]}}
+ for(let i=n-1;i>=0;i--){let s=b[i];
+  for(let j=i+1;j<n;j++)s-=A[i][j]*w[j];w[i]=s/A[i][i]}
+ return w}
+const ev=(w,x)=>{let s=0,v=1;for(const c of w){s+=c*v;v*=x}return s};
+const sv=document.getElementById('sv');
+const css=v=>`var(--${v})`;
+const L=52,T=16,W1=540,H=330;
+const X=v=>L+v*W1, Y=v=>T+H/2-(v/1.9)*(H/2);
+function draw(){
+ document.getElementById('mv').textContent=M;
+ const lam=LL<=-12?0:Math.pow(10,LL);
+ document.getElementById('lv').textContent=LL<=-12?'0':('1e'+LL);
+ const w=solve(M,lam);
+ let s=`<rect x="${L}" y="${T}" width="${W1}" height="${H}" fill="none" stroke="var(--border-strong)" stroke-width="0.5"/>`;
+ let dt='',df='';
+ for(let i=0;i<=300;i++){const x=i/300;
+  dt+=(i?'L':'M')+X(x).toFixed(1)+' '+Y(Math.sin(2*Math.PI*x)).toFixed(1);
+  df+=(i?'L':'M')+X(x).toFixed(1)+' '+Y(Math.max(-1.85,Math.min(1.85,ev(w,x)))).toFixed(1)}
+ s+=`<path d="${dt}" stroke="var(--text-muted)" stroke-width="1.6" stroke-dasharray="5 4" fill="none"/>`;
+ s+=`<path d="${df}" stroke="${css('blue')}" stroke-width="2.5" fill="none"/>`;
+ for(let i=0;i<xs.length;i++)s+=`<circle cx="${X(xs[i])}" cy="${Y(ts[i])}" r="4.5" fill="${css('amber')}"/>`;
+ // error bars
+ let etr=0;for(let i=0;i<xs.length;i++){const d=ev(w,xs[i])-ts[i];etr+=d*d}
+ etr=Math.sqrt(etr/xs.length);
+ let ete=0;for(let i=0;i<=200;i++){const x=i/200;const d=ev(w,x)-Math.sin(2*Math.PI*x);ete+=d*d}
+ ete=Math.sqrt(ete/201);
+ const BX=640,BW=70,BB=T+H;
+ const bar=(x,v,col,lab)=>{const h=Math.min(v/0.8,1)*(H-50);
+  return `<rect x="${x}" y="${BB-h}" width="${BW}" height="${h}" fill="${col}" rx="2"/>
+  <text x="${x+BW/2}" y="${BB-h-8}" text-anchor="middle" style="font-size:12.5px;font-weight:700;fill:${col}">${v.toFixed(3)}</text>
+  <text x="${x+BW/2}" y="${BB+16}" text-anchor="middle" style="font-size:11.5px;fill:var(--text-muted)">${lab}</text>`};
+ s+=bar(BX,etr,css('green'),'train rms');
+ s+=bar(BX+100,ete,css('orange'),'test rms');
+ sv.innerHTML=s;
+ document.getElementById('out').innerHTML=`M = ${M}, λ = ${lam===0?'0':'1e'+LL}: train rms <b style="color:${css('green')}">${etr.toFixed(4)}</b> · true-curve rms <b style="color:${css('orange')}">${ete.toFixed(4)}</b>`+
+  (M>=8&&lam===0?' — <b style="color:'+css('pink')+'">memorized the noise</b>':'');
+ document.getElementById('cap').textContent='Train error (green) only ever falls as M grows — at M = 9 the polynomial threads every point exactly. The error against the TRUE curve (orange) is U-shaped: too stiff, just right, then wild. Now fix M = 9 and raise λ: the regularizer buys back almost all the damage without changing the model class. This is lecture 3’s Runge lesson wearing machine-learning clothes.'}
+document.getElementById('m').oninput=e=>{M=+e.target.value;draw()};
+document.getElementById('l').oninput=e=>{LL=+e.target.value;draw()};
+document.getElementById('re').onclick=()=>{make();draw()};
+make();draw();
+const __post=()=>parent.postMessage({demoHeight:document.body.scrollHeight+8},'*');
+addEventListener('load',__post);new ResizeObserver(__post).observe(document.body);
+</script></body></html>

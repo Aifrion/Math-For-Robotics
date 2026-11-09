@@ -1,0 +1,82 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Bayesian Line Fitting</title>
+<style>
+:root{--text-primary:#1f2937;--text-secondary:#4b5563;--text-muted:#9ca3af;--text-success:#15803d;--text-accent:#1d4ed8;--bg-accent:#dbeafe;--border:#e5e7eb;--border-strong:#cbd5e1;--border-accent:#93c5fd;--radius:8px;--bg:#fff;--blue:#378ADD;--pink:#D4537E;--green:#16a34a;--amber:#BA7517}
+@media (prefers-color-scheme:dark){:root{--text-primary:#e5e7eb;--text-secondary:#cbd5e1;--text-muted:#6b7280;--text-success:#4ade80;--text-accent:#93c5fd;--bg-accent:#1e3a8a;--border:#2f2f2f;--border-strong:#4b5563;--border-accent:#3b82f6;--bg:#191919;--blue:#60a5fa;--pink:#f472b6;--green:#4ade80;--amber:#fbbf24}}
+body{margin:0;padding:12px 16px;background:var(--bg);color:var(--text-primary);font:14px/1.5 -apple-system,Segoe UI,Helvetica,Arial,sans-serif;max-width:900px}
+.btns{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:6px}
+.btns button{font:inherit;font-size:13px;padding:4px 10px;border:0.5px solid var(--border-strong);border-radius:var(--radius);background:transparent;color:var(--text-primary);cursor:pointer}
+#out{font-size:13.5px;margin-top:4px;font-variant-numeric:tabular-nums}
+#cap{font-size:13px;color:var(--text-secondary);margin-top:4px;line-height:1.55}
+</style></head><body>
+<div class="btns"><button id="a1">+ 1 observation</button><button id="a5">+ 5 observations</button><button id="rst">reset to prior</button>
+<span style="font-size:13px;color:var(--text-secondary);align-self:center;margin-left:8px">truth: t = −0.3 + 0.5x (hidden from the learner)</span></div>
+<svg id="sv" width="100%" viewBox="0 0 860 420" style="touch-action:none"></svg>
+<div id="out"></div>
+<div id="cap"></div>
+<script>
+// Bayesian linear regression (Bishop's example): y = w0 + w1 x,
+// prior N(0, alpha^-1 I), likelihood noise beta^-1. Closed-form posterior.
+const A=2.0, B=25.0, W=[-0.3,0.5];
+let seed=7;
+function rnd(){seed=(seed*1664525+1013904223)>>>0;return seed/4294967296}
+function gauss(){return Math.sqrt(-2*Math.log(rnd()+1e-12))*Math.cos(2*Math.PI*rnd())}
+let pts=[];
+// posterior: Sinv = A I + B Phi'Phi ; m = B S Phi't
+function posterior(){
+ let s00=A,s01=0,s11=A,b0=0,b1=0;
+ for(const[x,t]of pts){s00+=B;s01+=B*x;s11+=B*x*x;b0+=B*t;b1+=B*x*t}
+ const det=s00*s11-s01*s01;
+ const S=[[s11/det,-s01/det],[-s01/det,s00/det]];
+ const m=[S[0][0]*b0+S[0][1]*b1, S[1][0]*b0+S[1][1]*b1];
+ return{m,S}}
+function sampleW(m,S){ // cholesky of 2x2
+ const l00=Math.sqrt(S[0][0]), l10=S[1][0]/l00, l11=Math.sqrt(Math.max(S[1][1]-l10*l10,1e-12));
+ const z0=gauss(),z1=gauss();
+ return[m[0]+l00*z0, m[1]+l10*z0+l11*z1]}
+const sv=document.getElementById('sv');
+const css=v=>`var(--${v})`;
+const L1=55,T=30,S1=330; // data space
+const L2=470,S2=330;     // w space
+const DX=v=>L1+(v+1)/2*S1, DY=v=>T+(1.1-v)/2.2*S1;
+const WX=v=>L2+(v+1)/2*S2, WY=v=>T+(1-v)/2*S2;
+function draw(){
+ const{m,S}=posterior();
+ let s=`<text x="${L1+S1/2}" y="${T-10}" text-anchor="middle" style="font-size:13px;font-weight:600;fill:var(--text-primary)">data space: lines the posterior believes in</text>`;
+ s+=`<rect x="${L1}" y="${T}" width="${S1}" height="${S1}" fill="none" stroke="var(--border-strong)" stroke-width="0.5"/>`;
+ s+=`<text x="${L2+S2/2}" y="${T-10}" text-anchor="middle" style="font-size:13px;font-weight:600;fill:var(--text-primary)">weight space: p(w₀, w₁ | data)</text>`;
+ s+=`<rect x="${L2}" y="${T}" width="${S2}" height="${S2}" fill="none" stroke="var(--border-strong)" stroke-width="0.5"/>`;
+ // data space: posterior samples
+ seed=12345+pts.length*77;
+ for(let k=0;k<17;k++){const[w0,w1]=sampleW(m,S);
+  s+=`<path d="M${DX(-1)} ${DY(w0-w1)}L${DX(1)} ${DY(w0+w1)}" stroke="${css('pink')}" stroke-width="1" opacity="0.45"/>`}
+ s+=`<path d="M${DX(-1)} ${DY(m[0]-m[1])}L${DX(1)} ${DY(m[0]+m[1])}" stroke="${css('blue')}" stroke-width="2.6"/>`;
+ s+=`<path d="M${DX(-1)} ${DY(W[0]-W[1])}L${DX(1)} ${DY(W[0]+W[1])}" stroke="var(--text-muted)" stroke-width="1.6" stroke-dasharray="6 4"/>`;
+ for(const[x,t]of pts)s+=`<circle cx="${DX(x)}" cy="${DY(t)}" r="4.5" fill="${css('amber')}"/>`;
+ // w space: ellipses (1 and 2 sigma) via eigen of S
+ const tr=S[0][0]+S[1][1], dt=S[0][0]*S[1][1]-S[0][1]*S[1][0];
+ const l1=tr/2+Math.sqrt(Math.max(tr*tr/4-dt,0)), l2=tr/2-Math.sqrt(Math.max(tr*tr/4-dt,0));
+ const ang=Math.atan2(l1-S[0][0],S[0][1]||1e-12);
+ for(const k of[2,1]){
+  s+=`<ellipse cx="${WX(m[0])}" cy="${WY(m[1])}" rx="${k*Math.sqrt(Math.max(l1,1e-9))/2*S2}" ry="${k*Math.sqrt(Math.max(l2,1e-9))/2*S2}" transform="rotate(${-ang*180/Math.PI} ${WX(m[0])} ${WY(m[1])})" fill="${css('blue')}" opacity="${k===1?0.35:0.15}"/>`}
+ s+=`<circle cx="${WX(W[0])}" cy="${WY(W[1])}" r="5" fill="none" stroke="var(--text-primary)" stroke-width="2"/>`;
+ s+=`<text x="${WX(W[0])+9}" y="${WY(W[1])-7}" style="font-size:11.5px;fill:var(--text-primary)">truth</text>`;
+ s+=`<circle cx="${WX(m[0])}" cy="${WY(m[1])}" r="4" fill="${css('blue')}"/>`;
+ s+=`<text x="${L2+S2/2}" y="${T+S1+18}" text-anchor="middle" style="font-size:11px;fill:var(--text-muted)">w₀ →  (vertical: w₁)</text>`;
+ s+=`<text x="${L1+S1/2}" y="${T+S1+18}" text-anchor="middle" style="font-size:11px;fill:var(--text-muted)">x ∈ [−1, 1]</text>`;
+ sv.innerHTML=s;
+ const sd0=Math.sqrt(S[0][0]).toFixed(3), sd1=Math.sqrt(S[1][1]).toFixed(3);
+ document.getElementById('out').innerHTML=
+  `${pts.length} observation${pts.length===1?'':'s'} · posterior mean w = (<b style="color:${css('blue')}">${m[0].toFixed(3).replace('-','−')}, ${m[1].toFixed(3).replace('-','−')}</b>) ± (${sd0}, ${sd1}) · truth (−0.300, 0.500)`;
+ document.getElementById('cap').textContent= pts.length===0?
+  'Before any data: the prior N(0, α⁻¹I) believes in every moderate line equally — the pink samples go every which way. Each observation multiplies in one likelihood and the blob in weight space tightens.'
+  :'Pink lines are random draws from the CURRENT posterior — the set of explanations still alive. One point kills every line that misses it (a diagonal ridge in w-space); two points nearly pin the line; twenty make the posterior a dot. Bayesian regression never commits to one answer — it narrows a distribution, and the leftover blob width IS your error bar.'}
+function addPoint(){const x=2*rnd()-1;const t=W[0]+W[1]*x+0.2*gauss();pts.push([x,t])}
+document.getElementById('a1').onclick=()=>{addPoint();draw()};
+document.getElementById('a5').onclick=()=>{for(let i=0;i<5;i++)addPoint();draw()};
+document.getElementById('rst').onclick=()=>{pts=[];seed=7;draw()};
+draw();
+const __post=()=>parent.postMessage({demoHeight:document.body.scrollHeight+8},'*');
+addEventListener('load',__post);new ResizeObserver(__post).observe(document.body);
+</script></body></html>

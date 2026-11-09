@@ -1,0 +1,103 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Perceptron Trainer</title>
+<style>
+:root{--text-primary:#1f2937;--text-secondary:#4b5563;--text-muted:#9ca3af;--text-success:#15803d;--text-accent:#1d4ed8;--bg-accent:#dbeafe;--border:#e5e7eb;--border-strong:#cbd5e1;--border-accent:#93c5fd;--radius:8px;--bg:#fff;--blue:#378ADD;--pink:#D4537E;--green:#16a34a;--amber:#BA7517}
+@media (prefers-color-scheme:dark){:root{--text-primary:#e5e7eb;--text-secondary:#cbd5e1;--text-muted:#6b7280;--text-success:#4ade80;--text-accent:#93c5fd;--bg-accent:#1e3a8a;--border:#2f2f2f;--border-strong:#4b5563;--border-accent:#3b82f6;--bg:#191919;--blue:#60a5fa;--pink:#f472b6;--green:#4ade80;--amber:#fbbf24}}
+body{margin:0;padding:12px 16px;background:var(--bg);color:var(--text-primary);font:14px/1.5 -apple-system,Segoe UI,Helvetica,Arial,sans-serif;max-width:900px}
+.btns{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:6px}
+.btns button{font:inherit;font-size:13px;padding:4px 10px;border:0.5px solid var(--border-strong);border-radius:var(--radius);background:transparent;color:var(--text-primary);cursor:pointer}
+.btns button.on{background:var(--bg-accent);color:var(--text-accent);border-color:var(--border-accent)}
+#out{font-size:13.5px;margin-top:4px;font-variant-numeric:tabular-nums}
+#cap{font-size:13px;color:var(--text-secondary);margin-top:4px;line-height:1.55}
+</style></head><body>
+<div class="btns"><button data-p="0" class="on">separable</button><button data-p="1">narrow margin</button><button data-p="2">XOR (impossible)</button>
+<span style="flex:1"></span>
+<button id="step">1 update</button><button id="run">▶ run</button><button id="stop">⏸</button><button id="rst">reset w</button></div>
+<svg id="sv" width="100%" viewBox="0 0 860 420"></svg>
+<div id="out"></div>
+<div id="cap"></div>
+<script>
+// Perceptron: on a misclassified sample, w <- w + eta phi t.
+let preset=0, w=[0,0,0], updates=0, anim=null, lastIdx=-1, converged=false;
+let seed=3;
+function rnd(){seed=(seed*1664525+1013904223)>>>0;return seed/4294967296}
+function gauss(){return Math.sqrt(-2*Math.log(rnd()+1e-12))*Math.cos(2*Math.PI*rnd())}
+let pts=[];
+function make(){
+ pts=[];seed=3;w=[0,0,0];updates=0;lastIdx=-1;converged=false;
+ if(preset===2){
+  pts=[[0.6,0.6,1],[-0.6,-0.6,1],[0.6,-0.6,-1],[-0.6,0.6,-1]];
+  for(let i=0;i<10;i++){const c=i%4;const b=pts[c];
+   pts.push([b[0]+0.14*gauss(),b[1]+0.14*gauss(),b[2]])}
+ }else{
+  const gap=preset===0?0.9:0.3;
+  for(let i=0;i<26;i++){
+   pts.push([-gap+0.42*gauss()-0.3, gap+0.42*gauss()+0.3, 1]);
+   pts.push([ gap+0.42*gauss()+0.3,-gap+0.42*gauss()-0.3,-1])}
+ }}
+function missed(){const m=[];
+ for(let i=0;i<pts.length;i++){const[x,y,t]=pts[i];
+  if(t*(w[0]+w[1]*x+w[2]*y)<=0)m.push(i)}
+ return m}
+function step(){
+ const m=missed();
+ if(!m.length){converged=true;return false}
+ const i=m[Math.floor(rnd()*m.length)];
+ const[x,y,t]=pts[i];
+ w=[w[0]+t, w[1]+t*x, w[2]+t*y];
+ updates++;lastIdx=i;return true}
+const sv=document.getElementById('sv');
+const css=v=>`var(--${v})`;
+const L=240,T=14,S=380;
+const X=v=>L+(v+1.8)/3.6*S, Y=v=>T+(1.8-v)/3.6*S;
+function draw(){
+ const m=missed();
+ let s=`<rect x="${L}" y="${T}" width="${S}" height="${S}" fill="none" stroke="var(--border-strong)" stroke-width="0.5"/>`;
+ s+=`<defs><clipPath id="cp"><rect x="${L}" y="${T}" width="${S}" height="${S}"/></clipPath></defs>`;
+ // boundary w0 + w1 x + w2 y = 0
+ if(Math.abs(w[1])>1e-9||Math.abs(w[2])>1e-9){
+  s+=`<g clip-path="url(#cp)">`;
+  if(Math.abs(w[2])>Math.abs(w[1])){
+   const y1=(-w[0]-w[1]*(-1.8))/w[2], y2=(-w[0]-w[1]*1.8)/w[2];
+   s+=`<path d="M${X(-1.8)} ${Y(y1)}L${X(1.8)} ${Y(y2)}" stroke="${css('green')}" stroke-width="2.4"/>`;
+  }else{
+   const x1=(-w[0]-w[2]*(-1.8))/w[1], x2=(-w[0]-w[2]*1.8)/w[1];
+   s+=`<path d="M${X(x1)} ${Y(-1.8)}L${X(x2)} ${Y(1.8)}" stroke="${css('green')}" stroke-width="2.4"/>`}
+  s+=`</g>`;
+  // w arrow from boundary midpoint-ish
+  const n=Math.hypot(w[1],w[2]);
+  s+=`<path d="M${X(0)} ${Y(0)}L${X(0.5*w[1]/n)} ${Y(0.5*w[2]/n)}" stroke="${css('green')}" stroke-width="1.5" stroke-dasharray="3 3"/>`}
+ for(let i=0;i<pts.length;i++){const[x,y,t]=pts[i];
+  const bad=m.includes(i);
+  const col=t>0?css('blue'):css('pink');
+  if(t>0)s+=`<circle cx="${X(x)}" cy="${Y(y)}" r="${bad?5.5:4}" fill="${col}" ${bad?'stroke="var(--text-primary)" stroke-width="1.6"':''}/>`;
+  else s+=`<rect x="${X(x)-4}" y="${Y(y)-4}" width="8" height="8" rx="1.5" fill="${col}" ${bad?'stroke="var(--text-primary)" stroke-width="1.6"':''}/>`;
+  if(i===lastIdx)s+=`<circle cx="${X(x)}" cy="${Y(y)}" r="10" fill="none" stroke="${css('amber')}" stroke-width="2.4"/>`}
+ // side text
+ s+=`<text x="16" y="50" style="font-size:13px;font-weight:600;fill:var(--text-primary)">rule:</text>`;
+ s+=`<text x="16" y="72" style="font-size:12.5px;fill:var(--text-secondary)">pick a misclassified point,</text>`;
+ s+=`<text x="16" y="90" style="font-size:12.5px;fill:var(--text-secondary)">w ← w + η·φ·t</text>`;
+ s+=`<text x="16" y="130" style="font-size:12.5px;fill:var(--text-primary)">w = (${w[0].toFixed(1).replace('-','−')}, ${w[1].toFixed(1).replace('-','−')}, ${w[2].toFixed(1).replace('-','−')})</text>`;
+ s+=`<text x="16" y="152" style="font-size:12.5px;fill:var(--text-primary)">updates: ${updates}</text>`;
+ s+=`<text x="16" y="174" style="font-size:12.5px;fill:${m.length?css('pink'):'var(--text-success)'}">misclassified: ${m.length}${m.length?'':' ✓ done'}</text>`;
+ sv.innerHTML=s;
+ document.getElementById('out').innerHTML= converged?
+  `<b style="color:var(--text-success)">converged after ${updates} updates — every point on its right side ✓</b>`
+  :`${m.length} misclassified (outlined) · the amber ring marks the sample used by the last update`;
+ const caps=['Well-separated classes: a handful of updates finds a separating line. The perceptron theorem guarantees convergence in finitely many updates whenever a separating line exists.',
+ 'A narrow margin: still separable, so it still converges — but it takes many more updates (the convergence bound scales like 1/margin²). Watch the line thrash before it settles.',
+ 'XOR: no line can be right about all four corners. The perceptron never converges — it cycles forever, each fix breaking something else. This observation (Minsky & Papert, 1969) is why multi-layer networks exist.'];
+ document.getElementById('cap').textContent=caps[preset]}
+function loop(){if(step()){draw();anim=setTimeout(loop,140)}else{draw();anim=null}}
+document.querySelectorAll('[data-p]').forEach(b=>b.onclick=()=>{
+ document.querySelectorAll('[data-p]').forEach(z=>z.classList.toggle('on',z===b));
+ preset=+b.dataset.p;if(anim){clearTimeout(anim);anim=null}make();draw()});
+document.getElementById('step').onclick=()=>{if(anim){clearTimeout(anim);anim=null}step();draw()};
+document.getElementById('run').onclick=()=>{if(!anim)loop()};
+document.getElementById('stop').onclick=()=>{if(anim){clearTimeout(anim);anim=null}};
+document.getElementById('rst').onclick=()=>{if(anim){clearTimeout(anim);anim=null}w=[0,0,0];updates=0;lastIdx=-1;converged=false;draw()};
+make();draw();
+const __post=()=>parent.postMessage({demoHeight:document.body.scrollHeight+8},'*');
+addEventListener('load',__post);new ResizeObserver(__post).observe(document.body);
+</script></body></html>

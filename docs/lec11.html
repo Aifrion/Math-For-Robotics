@@ -1,0 +1,243 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Lecture 11 — Regression &amp; Classification | Math for Robotics</title>
+<link rel="stylesheet" href="assets/site.css">
+<link rel="stylesheet" href="vendor/katex/katex.min.css">
+<script defer src="vendor/katex/katex.min.js"></script>
+<script defer src="vendor/katex/auto-render.min.js"></script>
+<script defer src="assets/site.js"></script>
+</head><body>
+<div class="layout">
+<main><div class="content">
+
+<h1>Lecture 11: Regression &amp; Classification</h1>
+
+<div class="callout summary"><span class="tag">The one-sentence version:</span>
+Lecture 2's least squares grows up: wrap it in basis functions and it fits anything (regression),
+wrap it in probability and it carries error bars (Bayesian), point it at labels instead of values
+and — with one covariance-shaped correction (Fisher) or an error-driven update rule (perceptron)
+— it classifies.
+<br><span class="small muted">CSE 276C, Lecture 11 · Prof. Henrik Christensen · Bishop PRML ch. 3–4.
+All numbers verified in <code>scripts/lec11/verify.py</code>.</span></div>
+
+<div class="toc"><b>Contents</b><ol>
+<li><a href="#loss">The loss function &amp; what "best" means</a></li>
+<li><a href="#basis">Linear basis function models</a></li>
+<li><a href="#ml">Maximum likelihood = least squares</a></li>
+<li><a href="#lines">Interlude: fitting lines to laser scans</a></li>
+<li><a href="#seq">Sequential learning &amp; regularization</a></li>
+<li><a href="#bayes">Bayesian linear regression</a></li>
+<li><a href="#evidence">Picking the model: Bayesian comparison</a></li>
+<li><a href="#class">Classification &amp; discriminant functions</a></li>
+<li><a href="#lsqc">Least squares as a classifier (and its sins)</a></li>
+<li><a href="#fisher">Fisher's discriminant</a></li>
+<li><a href="#perceptron">The perceptron</a></li>
+<li><a href="#summary">Summary</a></li>
+</ol></div>
+
+<h2 id="big">The big picture</h2>
+<p>Everything in this lecture is the same object — a linear model \(y = \mathbf w^\top \phi(\mathbf x)\)
+— asked three escalating questions: <em>what's the best w?</em> (least squares), <em>how sure am
+I?</em> (Bayesian), <em>which side?</em> (classification). The robotics pitch from slide 5:
+predict battery time, time-to-completion, where doors are — and classify what the sensors see.</p>
+<table>
+<tr><th>robotics problem</th><th>tool</th><th>section</th></tr>
+<tr><td>battery time remaining from load history</td><td>basis-function regression</td><td>2–3</td></tr>
+<tr><td>walls from laser scans</td><td>LSQ / total LSQ line fitting</td><td>4</td></tr>
+<tr><td>calibration that improves while driving</td><td>sequential LMS</td><td>5</td></tr>
+<tr><td>a grasp controller that knows its own uncertainty</td><td>Bayesian regression</td><td>6</td></tr>
+<tr><td>bolts vs needles on the conveyor</td><td>discriminants, Fisher, perceptron</td><td>8–11</td></tr>
+</table>
+
+<h2 id="loss">1 · The loss function &amp; what "best" means</h2>
+$$E[L] = \iint \{y(\mathbf x) - t\}^2\, p(\mathbf x, t)\, d\mathbf x\, dt
+\;\;\Longrightarrow\;\; y^*(\mathbf x) = E[t \mid \mathbf x]$$
+<p>Minimizing expected squared loss over <em>all possible functions</em> (a Lecture 9 variational
+argument!) gives the conditional mean: the ideal regressor averages the targets seen at each x.
+Splitting the loss shows \(E[L] = \int \{y - E[t|x]\}^2 p\,dx + \int \{E[t|x] - t\}^2 p\,dx\):
+the second term is the noise floor no model can beat — know it exists, so you stop tuning when
+you hit it.</p>
+
+<h2 id="basis">2 · Linear basis function models</h2>
+$$y(\mathbf x, \mathbf w) = \sum_{i=0}^{m} w_i\,\phi_i(\mathbf x) = \mathbf w^\top \phi(\mathbf x)$$
+<table>
+<tr><th>basis</th><th>formula</th><th>character</th></tr>
+<tr><td>polynomial</td><td>\(\phi_i = x^i\)</td><td>global — one sample tugs the whole curve (Lecture 3's Vandermonde warning applies)</td></tr>
+<tr><td>Gaussian</td><td>\(\phi_i = e^{-(x-\mu_i)^2/2s^2}\)</td><td>local bumps — RBF networks, kriging's cousins</td></tr>
+<tr><td>sigmoid</td><td>\(\phi_i = \sigma\!\big(\tfrac{x-\mu_i}{s}\big)\)</td><td>soft steps — one layer short of a neural net</td></tr>
+</table>
+<p class="small muted"><b>Linear</b> means linear <em>in w</em>, not in x — the model can be as
+curvy as the basis allows while the fitting stays one linear solve.</p>
+
+<h2 id="ml">3 · Maximum likelihood = least squares</h2>
+<p>Assume Gaussian noise \(t = y(x, \mathbf w) + \epsilon\), \(\epsilon \sim N(0, \beta^{-1})\).
+The log-likelihood of the data is \(\tfrac N2\ln\beta - \tfrac N2 \ln 2\pi - \beta E_D(\mathbf w)\)
+with \(E_D = \tfrac12\sum_i \{t_i - \mathbf w^\top\phi(x_i)\}^2\) — so maximizing likelihood
+<em>is</em> minimizing squared error, and the optimum is the normal equations:</p>
+$$\mathbf w_{ML} = (\Phi^\top \Phi)^{-1} \Phi^\top \mathbf t, \qquad
+\Phi_{ij} = \phi_j(x_i)\ \text{(one <b>row per sample</b>, one <b>column per basis</b>)}$$
+<figure><img src="figures/lec11/01_overfitting.svg" alt="Underfit, fit, overfit" width="860">
+<figcaption>Fig 1 — 10 noisy sine samples. M = 1 underfits (test rms 0.45), M = 3 fits (0.15), M = 9 interpolates every point and ruins the in-between (0.45 again). All verified; same seed as <code>verify.py</code>.</figcaption></figure>
+<p>🕹️ <b>Try it:</b> capacity slider vs regularization slider — watch train error lie to you:</p>
+<div class="demo-wrap"><iframe class="demo" src="demos/lec11/overfit_explorer.html" height="560" title="Overfit explorer"></iframe></div>
+
+<h2 id="lines">4 · Interlude: fitting lines to laser scans</h2>
+<p>The slides ground this in a robot's laser scanner. Vertical-error LSQ (y = ax + b) fails on
+near-vertical walls — Lecture 2 / HW3's lesson. Alternatives, in increasing robot-worthiness:</p>
+<table>
+<tr><th>model</th><th>error minimized</th><th>solve</th></tr>
+<tr><td>\(y = ax + b\)</td><td>vertical offsets</td><td>2×2 normal equations</td></tr>
+<tr><td>\(ax + by + c = 0,\ a^2{+}b^2{=}1\)</td><td>perpendicular distance (total LSQ)</td><td>eigenvector of the 2×2 scatter matrix — HW3's SVD plane fit in 2-D</td></tr>
+<tr><td>\(r_i \cos(\phi_i - \theta) = \rho\)</td><td>range residuals in sensor coordinates</td><td>nonlinear LSQ; matches the scanner's actual noise, good for polishing Hough lines</td></tr>
+</table>
+
+<h2 id="seq">5 · Sequential learning &amp; regularization</h2>
+<p>Streaming data? Update per sample (LMS — gradient descent on one term of E_D):</p>
+$$\mathbf w^{(\tau+1)} = \mathbf w^{(\tau)} + \eta\,\big(t_n - \mathbf w^{(\tau)\top}\phi(x_n)\big)\,\phi(x_n)$$
+<p class="small muted">Verified: with the + sign this converges to the true line to 10⁻¹⁰; with
+the − sign the slide prints, it diverges (see typos box). η trades speed against stability — the
+same step-size story as Lecture 7's integrators.</p>
+<p>Against overfitting, penalize weight size (ridge):</p>
+$$E_D(\mathbf w) + \tfrac\lambda2 \mathbf w^\top \mathbf w
+\;\Rightarrow\; \mathbf w = (\lambda I + \Phi^\top\Phi)^{-1}\Phi^\top \mathbf t$$
+<p class="small muted">Verified: λ = 10⁻⁴ takes M = 9 from test rms 0.447 to 0.136 — Lecture 3's
+kriging regularizer and this are the same trick.</p>
+
+<h2 id="bayes">6 · Bayesian linear regression</h2>
+<p>Instead of one w, keep a distribution. Gaussian prior × Gaussian likelihood stays Gaussian:</p>
+$$p(\mathbf w) = N(0, \alpha^{-1}I)
+\;\Rightarrow\;
+p(\mathbf w \mid \mathbf t) = N(\mathbf m_N, S_N),\quad
+\mathbf m_N = \beta S_N \Phi^\top \mathbf t,\quad
+S_N^{-1} = \alpha I + \beta \Phi^\top \Phi$$
+<table>
+<tr><th>symbol</th><th>meaning</th></tr>
+<tr><td>\(\alpha\)</td><td>prior precision — how strongly you believe "weights are small" before data (= λ/β of ridge: ridge is the Bayesian MAP in disguise)</td></tr>
+<tr><td>\(\beta\)</td><td>noise precision (1/σ²) of the sensor</td></tr>
+<tr><td>\(S_N\)</td><td>posterior covariance — the error bars on w, shrinking as ΦᵀΦ accumulates</td></tr>
+</table>
+<p>Bishop's running example, verified: truth (−0.3, 0.5), noise σ = 0.2. Posterior mean after 1
+point: (0.21, 0.13) ± (0.40, 0.61) — barely better than the prior; after 2: (0.05, 0.38); after 20:
+<b>(−0.28, 0.50) ± (0.05, 0.07)</b>.</p>
+<p>🕹️ <b>Try it:</b> feed observations one at a time and watch the posterior blob collapse onto
+the truth:</p>
+<div class="demo-wrap"><iframe class="demo" src="demos/lec11/bayes_line.html" height="560" title="Bayesian line fitting"></iframe></div>
+
+<h2 id="evidence">7 · Picking the model: Bayesian comparison</h2>
+$$p(M_i \mid D) \propto p(D \mid M_i)\,p(M_i), \qquad
+p(D \mid M_i) = \int p(D \mid \mathbf w, M_i)\,p(\mathbf w \mid M_i)\,d\mathbf w$$
+<p>The <b>evidence</b> integrates the fit over every parameter value the model allows — so a
+flexible model that fits your data only in a tiny corner of its parameter space is penalized
+automatically: \(\ln p(D) \approx \ln p(D\mid w_{map}) + \ln(\sigma_{post}/\sigma_{prior})\), and
+that second term (the Occam factor) is negative in proportion to how much the data had to narrow
+the model down. Compare two models by the <b>Bayes factor</b> \(p(D|M_1)/p(D|M_2)\), or keep them
+all in a mixture. This is cross-validation's principled sibling: it picks M ≈ 3 for Fig 1's data
+without ever holding data out.</p>
+
+<h2 id="class">8 · Classification &amp; discriminant functions</h2>
+<p>Now the target is a class. The linear discriminant \(y(\mathbf x) = \mathbf w^\top\mathbf x + w_0\)
+decides by sign; geometrically w is the boundary's normal, \(-w_0/\lVert\mathbf w\rVert\) its
+distance from the origin, and \(y(\mathbf x)/\lVert\mathbf w\rVert\) is x's signed distance to it.
+Multi-class: one \(y_k\) per class, pick the argmax — regions come out convex. The slides' bolts
+vs needles example, fully verified:</p>
+<details><summary>Worked example: bolts vs needles, every number (click to open)</summary><div class="body">
+<p>Means \(m_{needle} = (0.86, 2.34)\), \(m_{bolt} = (5.74, 5.85)\). Expanding
+\(\lVert x - m\rVert^2\) and dropping the common \(\lVert x\rVert^2\) turns nearest-mean into linear
+rules \(d_j(x) = m_j^\top x - \tfrac12\lVert m_j\rVert^2\):
+\(d_{needle} = 0.86x_1 + 2.34x_2 - 3.11\), \(d_{bolt} = 5.74x_1 + 5.85x_2 - 33.59\) ✓ (slide's
+−3.10/−33.59, our −3.1076/−33.585). Boundary = their difference:
+\(-4.88x_1 - 3.51x_2 + 30.48 = 0\) (slide says 30.49 — it rounded the biases first). It is the
+perpendicular bisector of the segment joining the means.</p></div></details>
+<figure><img src="figures/lec11/02_bolts_needles.svg" alt="Bolts vs needles decision boundary" width="860">
+<figcaption>Fig 2 — the slides' conveyor-belt classic: nearest-mean classification <em>is</em> a linear discriminant.</figcaption></figure>
+
+<h2 id="lsqc">9 · Least squares as a classifier (and its sins)</h2>
+<p>Encode classes as target vectors (1-of-K), regress: \(\tilde W = (\tilde X^\top \tilde X)^{-1}\tilde X^\top T\).
+It works — until it doesn't: squared loss keeps caring about points that are <em>already right
+and far from the boundary</em>, so outliers drag the boundary toward themselves. Verified: adding
+a far-away cluster of correctly-classifiable points swings the boundary 45° and takes the error
+on the original data from 0% to 8.3%. Being "too correct" should never cost you — with squared
+loss it does.</p>
+
+<h2 id="fisher">10 · Fisher's discriminant</h2>
+<p>Project to 1-D and separate the classes <em>relative to their spread</em>:</p>
+$$J(\mathbf w) = \frac{\mathbf w^\top S_B\, \mathbf w}{\mathbf w^\top S_W\, \mathbf w},
+\qquad
+S_B = (\mathbf m_1 - \mathbf m_2)(\mathbf m_1 - \mathbf m_2)^\top,\quad
+S_W = \textstyle\sum_{C_1}(x - m_1)(x - m_1)^\top + \sum_{C_2}(\cdot)
+$$
+$$\Rightarrow\;\; \mathbf w \propto S_W^{-1}(\mathbf m_2 - \mathbf m_1)$$
+<p>The \(S_W^{-1}\) is the whole idea: don't walk along the mean difference, walk along it
+<em>after whitening the within-class scatter</em>. Verified on correlated clusters: naive
+mean-difference projection misclassifies 24.8%, Fisher 2.7% — and the solved w matches the top
+eigenvector of \(S_W^{-1}S_B\) to machine precision (K &gt; 2 classes: take the top eigenvectors —
+which is exactly Lecture 8's LDA/Fisherfaces).</p>
+<figure><img src="figures/lec11/03_fisher.svg" alt="Naive vs Fisher projections" width="860">
+<figcaption>Fig 3 — same clusters, two projections: the mean-difference direction overlaps badly; S_w⁻¹ fixes it.</figcaption></figure>
+
+<h2 id="perceptron">11 · The perceptron</h2>
+$$y(\mathbf x) = f(\mathbf w^\top \phi(\mathbf x)),\quad f = \mathrm{sign},
+\qquad
+E_P(\mathbf w) = -\!\!\sum_{n \in \mathcal M}\!\! \mathbf w^\top \phi_n t_n
+\;\Rightarrow\;
+\mathbf w \leftarrow \mathbf w + \eta\,\phi_n t_n \ \ (n \text{ misclassified})$$
+<p>Rosenblatt (1958): only <em>mistakes</em> update the weights — add the sample (times its
+label) to w, which rotates the boundary toward getting it right. If the data is linearly
+separable the algorithm converges in finitely many updates (verified; sometimes a single update
+does it); if not — XOR — it cycles forever (verified: no convergence in 200 epochs). That
+limitation, published by Minsky &amp; Papert, is the historical reason neural networks grew
+hidden layers.</p>
+<p>🕹️ <b>Try it:</b> watch single updates swing the boundary; then give it XOR and watch it
+thrash:</p>
+<div class="demo-wrap"><iframe class="demo" src="demos/lec11/perceptron_trainer.html" height="560" title="Perceptron trainer"></iframe></div>
+
+<h2 id="summary">12 · Summary</h2>
+<ul>
+<li>One model family — \(w^\top\phi(x)\) — covers regression and classification; the loss and the target encoding change, the algebra doesn't.</li>
+<li>ML with Gaussian noise = least squares; the design matrix Φ (rows = samples) makes it one solve.</li>
+<li>Capacity without control overfits; ridge (λI) and priors (α) are the same cure in two languages.</li>
+<li>Bayesian regression keeps the whole posterior: predictions come with calibrated error bars, and model comparison gets Occam's razor for free.</li>
+<li>LSQ classification is outlier-fragile; Fisher fixes the <em>direction</em> (S_w⁻¹), the perceptron fixes the <em>loss</em> (only mistakes count).</li>
+</ul>
+<table>
+<tr><th>method</th><th>one-line idea</th><th>use it when</th></tr>
+<tr><td>normal equations</td><td>(ΦᵀΦ)⁻¹Φᵀt</td><td>batch fit, any basis</td></tr>
+<tr><td>LMS</td><td>per-sample gradient step</td><td>streaming / online calibration</td></tr>
+<tr><td>ridge</td><td>(λI + ΦᵀΦ)⁻¹Φᵀt</td><td>rich basis, little data</td></tr>
+<tr><td>Bayesian regression</td><td>posterior over w</td><td>you need error bars / active learning</td></tr>
+<tr><td>nearest mean</td><td>linear discriminant from class means</td><td>quick baseline, well-separated classes</td></tr>
+<tr><td>Fisher / LDA</td><td>S_w⁻¹(m₂ − m₁)</td><td>correlated features, the default linear classifier</td></tr>
+<tr><td>perceptron</td><td>w += ηφt on mistakes</td><td>separable data, online; historical gateway to NNs</td></tr>
+</table>
+
+<details><summary>⚠️ Typos in the slides to watch out for</summary><div class="body"><ul>
+<li>Slide 19 (design matrix): the second row of Φ is printed "φ₀(x₁) φ₁(x₂) …" — the first entry
+should be φ₀(x₂); each row belongs to one sample.</li>
+<li>Slide 20 (line estimation): the right-hand side is printed \((\bar{y^2},\ \bar y)\) — the
+first entry must be \(\overline{xy}\) (mean of x·y). Verified: with the printed version the fit of
+a noise-free line y = 1.3x − 0.4 comes back a = 1.398 instead of 1.3.</li>
+<li>Slide 24 (LMS): the update is printed \(w^{(\tau+1)} = w^{(\tau)} - \eta(t_n - w^\top\phi)\phi\);
+since \(\nabla E_n = -(t_n - w^\top\phi)\phi\), the minus signs cancel and the update must be
+<b>+</b> η(t−wᵀφ)φ. Verified: the printed sign diverges, the corrected one converges to 10⁻¹⁰.</li>
+<li>Slide 55: "m_bolt = [5.74, 5, 85]ᵀ" — comma for decimal point; it is (5.74, 5.85).</li>
+<li>Slide 56: the boundary constant 30.49 comes from rounding the biases before subtracting
+(−3.10 + 33.59); unrounded it is 30.48. Harmless, but don't chase the 0.01.</li>
+<li>Slide 63: distances are written \(m_2 - m_1 = w^\top(m_2 - m_1)\) with \(m_i = w m_i\) —
+read the scalar projections as \(m_i = \mathbf w^\top \mathbf m_i\) (transpose missing).</li>
+</ul></div></details>
+
+<details><summary>🧠 Self-check questions</summary><div class="body">
+<details><summary>1 · Why is "linear regression" allowed to fit a sine wave?</summary><div class="body">Linear means linear in the weights. With basis functions φᵢ the model spans curvy functions while w still enters linearly — so the optimum is a linear solve. The nonlinearity is frozen into φ; only its mixture is learned.</div></details>
+<details><summary>2 · Train error fell when you raised M from 3 to 9. Why should you be suspicious, and what two instruments detect the problem?</summary><div class="body">Train error <em>always</em> falls with capacity — at M = N−1 it hits zero by interpolation (Lecture 3!). Detect with held-out/test error (U-shaped: 0.15 → 0.45 here) or with the Bayesian evidence, which charges models for the parameter volume they waste.</div></details>
+<details><summary>3 · Ridge's λ and the Bayesian prior's α look similar. What is the exact relationship?</summary><div class="body">The MAP estimate under prior N(0, α⁻¹I) and noise precision β maximizes −βE_D − (α/2)wᵀw — identical to ridge with λ = α/β. Ridge is Bayesian regression that keeps only the posterior's peak and throws away the error bars.</div></details>
+<details><summary>4 · Your LSQ classifier mislabels points it used to get right, after you added more data it also gets right. How?</summary><div class="body">The new points are far on the correct side — squared loss penalizes their large (correct!) margins and tilts the boundary toward them, sacrificing points near it. Verified: a 45° swing and 0% → 8.3% error. Fisher or the perceptron criterion don't reward being "less correct".</div></details>
+<details><summary>5 · When does Fisher's S_w⁻¹(m₂ − m₁) reduce to the plain mean difference, and when does it differ most?</summary><div class="body">If S_w ∝ I (round, uncorrelated classes), the inverse changes nothing. It differs most when classes are elongated and correlated at an angle to the mean difference — then whitening rotates the projection away from the overlap (24.8% → 2.7% here).</div></details>
+<details><summary>6 · The perceptron converged. Is its boundary the same one Fisher would give? Which do you trust where?</summary><div class="body">No — the perceptron stops at the <em>first</em> separating line it finds (update-order dependent, no margin notion); Fisher optimizes a fixed criterion and uses all points. For noisy, overlapping classes prefer Fisher; the perceptron only promises anything when the data is separable.</div></details>
+</div></details>
+
+<div class="prevnext"><a href="lec10.html">← Lecture 10: Spectral Analysis</a><span class="muted">Lecture 12: Configuration Space (soon)</span></div>
+
+</div></main>
+</div>
+</body></html>
