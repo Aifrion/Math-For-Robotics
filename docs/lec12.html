@@ -1,0 +1,204 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Lecture 12 — Configuration Space | Math for Robotics</title>
+<link rel="stylesheet" href="assets/site.css">
+<link rel="stylesheet" href="vendor/katex/katex.min.css">
+<script defer src="vendor/katex/katex.min.js"></script>
+<script defer src="vendor/katex/auto-render.min.js"></script>
+<script defer src="assets/site.js"></script>
+</head><body>
+<div class="layout">
+<main><div class="content">
+
+<h1>Lecture 12: Configuration Space</h1>
+
+<div class="callout summary"><span class="tag">The one-sentence version:</span>
+A robot is not a point — so build the space where it <em>is</em> one: configuration space, where
+every point q is a complete robot pose, obstacles become forbidden regions QO, and "will the arm
+hit the table?" turns into "is this point inside that set?".
+<br><span class="small muted">CSE 276C, Lecture 12 · guest lecture (Y. Jiao, adapted from
+Christensen &amp; Choset). All numbers verified in <code>scripts/lec12/verify.py</code>.</span></div>
+
+<div class="toc"><b>Contents</b><ol>
+<li><a href="#why">A robot is not a point</a></li>
+<li><a href="#defs">Workspace vs configuration space</a></li>
+<li><a href="#inflate">The disk robot: obstacle inflation</a></li>
+<li><a href="#minkowski">Minkowski sums: inflation done right</a></li>
+<li><a href="#rotation">When orientation matters</a></li>
+<li><a href="#arm">Manipulator C-space</a></li>
+<li><a href="#ik">Interlude: FK and IK of the 2-link arm</a></li>
+<li><a href="#topology">Topology: torus, wraparound, manifolds</a></li>
+<li><a href="#planner">The planner's interface</a></li>
+<li><a href="#summary">Summary</a></li>
+</ol></div>
+
+<h2 id="big">The big picture</h2>
+<p>Every earlier lecture optimized or solved over numbers. Planning needs a <em>space</em> to
+search first — and the right one isn't the room the robot stands in, it's the space of robot
+poses. The lecture's one transformation:</p>
+<p style="text-align:center" class="small"><b>extended body colliding in the workspace</b> ⟶
+<b>a point inside a forbidden set in C-space</b></p>
+<table>
+<tr><th>robotics problem</th><th>its C-space</th><th>dim</th></tr>
+<tr><td>point robot / drone position</td><td>\(\mathbb R^2\) or \(\mathbb R^3\)</td><td>2–3</td></tr>
+<tr><td>planar mobile robot (couch, car body)</td><td>\(SE(2) = \mathbb R^2 \times S^1\)</td><td>3</td></tr>
+<tr><td>free-flying rigid body</td><td>\(SE(3) = \mathbb R^3 \times SO(3)\)</td><td>6</td></tr>
+<tr><td>n-joint arm, unrestricted joints</td><td>the torus \(T^n\)</td><td>n</td></tr>
+<tr><td>mobile base + arm</td><td>\(SE(2) \times T^n\)</td><td>3 + n</td></tr>
+</table>
+
+<h2 id="why">1 · A robot is not a point</h2>
+<p>The opening slide's trap: plan a path for the robot's <em>centerline</em> through a corridor and
+the body still clips the walls — a reference point alone does not capture collisions. Costmap
+inflation (next section) is the practical fix for round robots, and the lecture's two "not
+quite" pictures show exactly where it stops working: elongated robots and arms.</p>
+
+<h2 id="defs">2 · Workspace vs configuration space</h2>
+<table>
+<tr><th>symbol</th><th>meaning</th></tr>
+<tr><td>\(W\)</td><td><b>workspace</b>: the physical room (ℝ² or ℝ³); obstacles \(WO \subset W\) live here</td></tr>
+<tr><td>\(Q\)</td><td><b>configuration space</b>: all complete robot poses; one point q = one full posture</td></tr>
+<tr><td>\(R(q) \subset W\)</td><td>the set of physical points the body occupies at configuration q</td></tr>
+<tr><td>\(QO = \{q \mid R(q) \cap WO \neq \emptyset\}\)</td><td>the <b>C-space obstacle</b>: every pose that touches something</td></tr>
+<tr><td>\(Q_{free} = Q \setminus QO\)</td><td>free space; a <b>path</b> is a continuous \(c : [0,1] \to Q_{free}\)</td></tr>
+</table>
+<div class="callout key"><span class="tag">💡 The key transformation:</span> all the geometry gets
+paid <em>once</em>, when you build (or query) QO. After that, collision checking is point
+membership and planning is finding a curve in \(Q_{free}\) — the same abstract problem whether
+the robot is a couch or a 7-DOF arm.</div>
+
+<h2 id="inflate">3 · The disk robot: obstacle inflation</h2>
+<p>For a translating disk of radius r, shrinking the robot to its center costs you growing every
+obstacle by r. Verified on 200,000 random placements: <b>disk-vs-rectangle collision is exactly
+"center inside the inflated rectangle"</b> — provided the inflation has <b>rounded corners</b>
+(quarter-circles of radius r). Square-cornered inflation wrongly forbids the four corner regions,
+total area \((4-\pi)r^2\) (0.21 m² for r = 0.5) — real free space your planner would never use.</p>
+<figure><img src="figures/lec12/01_inflation.svg" alt="Obstacle inflation and the rotation problem" width="860">
+<figcaption>Fig 1 — the point-robot trick (left pair, corners rounded), and its limit: a 2.4 × 0.6 robot facing a 1.0 gap fits only for θ &gt; 80.2° (right, verified) — so (x, y) alone cannot describe this robot.</figcaption></figure>
+
+<h2 id="minkowski">4 · Minkowski sums: inflation done right</h2>
+$$A \oplus B = \{a + b \mid a \in A,\, b \in B\},
+\qquad
+C_{obs} = O \oplus (-R)$$
+<p>For any translating robot shape R (reference point at its origin): collision means some robot
+point lands on some obstacle point, \(q + r = o\), i.e. \(q = o - r\) — so the forbidden
+reference-point positions are exactly the obstacle Minkowski-summed with the <em>negated</em>
+robot. Verified by sampling: no collision ever occurs outside the SAT-computed Minkowski set.
+Disk case: \(O \oplus B_r\) = the inflation of §3. Polygon case: slide the flipped robot around
+the obstacle boundary and trace.</p>
+
+<h2 id="rotation">5 · When orientation matters</h2>
+<p>A planar rigid body has 3 DOF: \(q = (x, y, \theta) \in \mathbb R^2 \times S^1\). Each fixed θ
+gives its own forbidden slice \(Q_{obs}(\theta) = O \oplus (-\mathrm{Rot}(\theta) R)\), and
+stacking the slices over θ builds a twisted 3-D volume (the slides' helical stack). Projecting θ
+away loses real solutions: the "2D inflation may not be enough" slides show a start and goal that
+<em>no</em> fixed-orientation map connects, while a path that rotates mid-passage sails through —
+the moving-piano problem.</p>
+<p>🕹️ <b>Try it:</b> the full (x, θ) picture of a long robot crossing a narrow gap — drive it
+through with and without rotating:</p>
+<div class="demo-wrap"><iframe class="demo" src="demos/lec12/corridor_cspace.html" height="700" title="Corridor C-space"></iframe></div>
+<div class="callout gotcha"><span class="tag">⚠️ Collision-free ≠ drivable:</span> a geometric
+path in \(Q_{free}\) says nothing about turning radius or velocity limits. A car-like robot cannot
+slide sideways (a <em>nonholonomic</em> constraint) — those constraints restrict the
+<em>derivatives</em> of paths, on top of the geometry. This lecture handles the geometry; feasible
+motion is extra.</div>
+
+<h2 id="arm">6 · Manipulator C-space</h2>
+<p>For an arm, q is the joint vector — a 2-link arm has \(q = (\alpha, \beta)\), and one workspace
+obstacle casts a curved shadow onto the joint-angle square. Computed for a real disk obstacle
+(both links collision-checked on a 240² grid): the shadow covers <b>12.3%</b> of the torus, and
+the free space stays <b>connected only because the square's edges wrap</b> (one component on the
+torus — verified by wrap-around flood fill).</p>
+<figure><img src="figures/lec12/02_arm_cspace.svg" alt="Arm workspace obstacle and its C-space shadow" width="860">
+<figcaption>Fig 2 — poses A and B are both free, but the straight C-space segment between them crosses the blob; the dashed path escapes through the α = ±180° seam — legal, because the C-space is a torus.</figcaption></figure>
+<p>🕹️ <b>Try it:</b> drag the obstacle and watch its C-space shadow morph; drag the dot through
+the seam:</p>
+<div class="demo-wrap"><iframe class="demo" src="demos/lec12/cspace_arm.html" height="620" title="Arm C-space explorer"></iframe></div>
+
+<h2 id="ik">7 · Interlude: FK and IK of the 2-link arm</h2>
+$$x = L_1\cos\alpha + L_2\cos(\alpha+\beta), \qquad
+y = L_1\sin\alpha + L_2\sin(\alpha+\beta)$$
+<p>Forward kinematics \(K : Q \to W\) maps joints to the hand — note K(q) (hand point) is not
+R(q) (whole body). Inverse kinematics inverts it:</p>
+$$\gamma = \cos^{-1}\!\frac{x^2 + y^2 - L_1^2 - L_2^2}{2 L_1 L_2}, \qquad
+\beta = \gamma, \qquad
+\alpha = \mathrm{atan2}(y, x) \mp \sin^{-1}\!\frac{L_2 \sin\gamma}{\sqrt{x^2+y^2}}$$
+<p class="small muted">Two solutions (elbow-down: β = +γ with −; elbow-up: β = −γ with +), both
+verified to reproduce (x, y) in 500/500 random round-trips. The slides print this slightly
+differently — see the typos box. Beyond two links: IK goes numerical (Lecture 5's Newton) or
+case-analytic (the PUMA code slide), solutions multiply, and an IK target is really a <em>set</em>
+of acceptable configurations — plan to the set, and collision-check all links, not the tip.</p>
+
+<h2 id="topology">8 · Topology: torus, wraparound, manifolds</h2>
+<table>
+<tr><th>space</th><th>shape</th><th>robot meaning</th></tr>
+<tr><td>\(\mathbb R^2\)</td><td>plane</td><td>two unbounded translations</td></tr>
+<tr><td>\(S^1 \times \mathbb R\)</td><td>cylinder</td><td>one angle + one translation</td></tr>
+<tr><td>\(T^2 = S^1 \times S^1\)</td><td>torus</td><td>two free revolute joints — opposite edges of the coordinate square glued</td></tr>
+</table>
+<p>Same dimension, different gluing — and the gluing has teeth:</p>
+$$d(359°, 1°) = 2°, \ \text{not } 358°
+\qquad\Longrightarrow\qquad
+d(a,b) = \min(|a-b| \bmod 360,\ 360 - |a-b| \bmod 360)$$
+<p>Every distance, interpolation, and "nearest neighbor" in a sampling planner must use the
+wrapped metric, or the planner will take the 358° detour. A C-space is in general a
+<b>manifold</b>: locally Euclidean, but no single global coordinate chart need cover it smoothly.
+Distinguish two kinds of trouble: <em>chart singularities</em> (longitude undefined at the poles —
+the space is fine, the coordinates aren't; switch charts) vs <em>physical singularities</em> (arm
+fully stretched: the Jacobian loses rank and some hand velocities become impossible — Lecture 2's
+null space appearing in the geometry).</p>
+
+<h2 id="planner">9 · The planner's interface</h2>
+<table>
+<tr><th>inputs</th><th>output</th></tr>
+<tr><td>Q (with its topology), robot + obstacle geometry, \(q_{start}\), \(q_{goal}\), a collision checker</td>
+<td>a continuous \(c:[0,1] \to Q_{free}\) with \(c(0) = q_{start}\), \(c(1) = q_{goal}\) — or a declared failure</td></tr>
+</table>
+<div class="callout gotcha"><span class="tag">⚠️ The endpoint trap:</span> two free configurations
+do <b>not</b> make a free edge — the straight interpolation between them can pass through an
+obstacle (slide 45's picture). Every candidate connection must be checked continuously or at a
+resolution finer than the thinnest obstacle. This is where planners spend their CPU.</div>
+<p>The three questions this hands to Lecture 13: how to represent/explore a continuous
+high-dimensional Q, how to test connections efficiently, and when a path can be guaranteed or
+improved — graph search, sampling, collision checking.</p>
+
+<h2 id="summary">10 · Summary</h2>
+<ul>
+<li>Configuration space makes the robot a point by making the space remember the body: QO = poses that touch something.</li>
+<li>Disk robots: inflate obstacles (rounded corners — square corners steal (4−π)r² per corner block). General translating shapes: Minkowski sum with −R.</li>
+<li>Rotation adds a dimension and cannot be projected away: the couch needs (x, y, θ), and some passages exist only through the θ dimension.</li>
+<li>Arms live on tori: one workspace obstacle → a curved 12%-of-the-torus blob, and paths may legally wrap through ±180°.</li>
+<li>Respect the topology in every metric and interpolation; distinguish chart singularities from physical (Jacobian) ones.</li>
+<li>A planner needs only: Q, a collision checker, start, goal — and the discipline to check whole edges, not endpoints.</li>
+</ul>
+
+<details><summary>⚠️ Typos in the slides to watch out for</summary><div class="body"><ul>
+<li>IK slide: α is printed as \(\sin^{-1}\!\big(\frac{L_2\sin\gamma}{x^2+y^2}\big) + \tan^{-1}(y/x)\)
+— the denominator is missing the square root: it must be \(\sqrt{x^2+y^2}\). Verified: with the
+printed version 500/500 random round-trips through the slide's own FK fail; with √, 0/500.</li>
+<li>Same slide, "β = 180 − γ": inconsistent with the printed γ. The printed
+\(\cos\gamma = \frac{x^2+y^2-L_1^2-L_2^2}{2L_1L_2}\) makes γ the FK joint angle itself, so β = γ
+(verified: β = γ round-trips exactly; β = 180° − γ fails 500/500). "β = 180 − γ" is right only if
+γ is the triangle's <em>interior</em> elbow angle, whose cosine is the <em>negative</em> of the
+printed fraction. One sign, pick one convention.</li>
+<li>Manifolds slide: "<b>Pyhsical</b> Singularity" → Physical.</li>
+<li>Transient note on the C-space-obstacle slide ("An IK target does not always specify a safe
+path…") is the subtitle of the <em>previous</em> slide, duplicated — the content is about mapping
+workspace obstacles to C-space.</li>
+</ul></div></details>
+
+<details><summary>🧠 Self-check questions</summary><div class="body">
+<details><summary>1 · Your lab's costmap inflates obstacles by the robot radius and plans for a point. What exact assumptions make that correct?</summary><div class="body">The robot must be a disk (rotation-invariant footprint) that only translates, and the inflation must use rounded corners of exactly radius r. Break any of them — elongated footprint, or square inflation — and you lose either safety or real free space ((4−π)r² per corner).</div></details>
+<details><summary>2 · Why is C_obs = O ⊕ (−R) and not O ⊕ R?</summary><div class="body">Collision means q + r = o for some robot point r and obstacle point o, so q = o + (−r): the forbidden <em>reference positions</em> are obstacle points plus points of the <em>negated</em> robot. For symmetric shapes (disks) the minus is invisible — which is how it gets forgotten until an asymmetric robot clips a corner.</div></details>
+<details><summary>3 · A couch fits through your doorway, but your (x, y) planner says the apartment is disconnected. What happened and what fixes it?</summary><div class="body">The conservative 2-D map forbade every position where <em>some</em> orientation collides — the doorway dies because broadside fails, even though nose-first works (our corridor: passable only for θ &gt; 80.2°). Fix: plan in (x, y, θ); the free space connects through a neck at rotated θ.</div></details>
+<details><summary>4 · In the arm demo, dragging the dot off the right edge brings it back on the left. What property of C-space does the planner lose if its code forgets this?</summary><div class="body">The torus topology: α = ±180° are the same configuration. Forgetting it splits one connected free space into components (our verified example is connected <em>only</em> through the seam), inflates distances (359° vs 1° reads as 358° instead of 2°), and makes "nearest neighbor" wrong in sampling planners.</div></details>
+<details><summary>5 · The arm is fully stretched and the longitude of a globe is undefined at the pole. Which is which kind of singularity, and what do you do about each?</summary><div class="body">The pole is a chart singularity — geometry fine, coordinates bad; switch charts (or use quaternions for SO(3), Lecture 1). The stretched arm is physical: the Jacobian drops rank and radial hand velocity is genuinely impossible; no re-parameterization fixes it — plan around it or approach with nonzero β.</div></details>
+<details><summary>6 · Both q_start and q_goal are collision-free, and the straight segment between them is free at its endpoints and midpoint. Ship it?</summary><div class="body">No — three samples prove nothing: an obstacle thinner than half the segment can sit between samples (slide 45). Check at resolution finer than the smallest obstacle feature, or use continuous/conservative collision checking (bounding volumes swept along the motion).</div></details>
+</div></details>
+
+<div class="prevnext"><a href="lec11.html">← Lecture 11: Regression &amp; Classification</a><span class="muted">Lecture 13: Planning Algorithms (soon)</span></div>
+
+</div></main>
+</div>
+</body></html>

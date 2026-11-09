@@ -1,0 +1,114 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Corridor in (x, θ) Space</title>
+<style>
+:root{--text-primary:#1f2937;--text-secondary:#4b5563;--text-muted:#9ca3af;--text-success:#15803d;--text-accent:#1d4ed8;--bg-accent:#dbeafe;--border:#e5e7eb;--border-strong:#cbd5e1;--border-accent:#93c5fd;--radius:8px;--bg:#fff;--card:#f9fafb;--blue:#378ADD;--pink:#D4537E;--green:#16a34a;--amber:#BA7517}
+@media (prefers-color-scheme:dark){:root{--text-primary:#e5e7eb;--text-secondary:#cbd5e1;--text-muted:#6b7280;--text-success:#4ade80;--text-accent:#93c5fd;--bg-accent:#1e3a8a;--border:#2f2f2f;--border-strong:#4b5563;--border-accent:#3b82f6;--bg:#191919;--card:#222;--blue:#60a5fa;--pink:#f472b6;--green:#4ade80;--amber:#fbbf24}}
+body{margin:0;padding:12px 16px;background:var(--bg);color:var(--text-primary);font:14px/1.5 -apple-system,Segoe UI,Helvetica,Arial,sans-serif;max-width:900px}
+.btns{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:6px}
+.btns button{font:inherit;font-size:13px;padding:4px 10px;border:0.5px solid var(--border-strong);border-radius:var(--radius);background:transparent;color:var(--text-primary);cursor:pointer}
+canvas{width:100%;height:auto;border-radius:10px;background:var(--card);display:block;touch-action:none}
+#cw{margin-bottom:10px}
+#out{font-size:13.5px;margin-top:6px;font-variant-numeric:tabular-nums}
+#cap{font-size:13px;color:var(--text-secondary);margin-top:4px;line-height:1.55}
+</style></head><body>
+<div class="btns"><button id="an">▶ drive through (rotating on the way)</button><button id="fail">▶ try it without rotating</button>
+<span style="font-size:13px;color:var(--text-secondary);align-self:center">or drag the robot (top) / the config point (bottom)</span></div>
+<canvas id="cw" width="860" height="250"></canvas>
+<canvas id="cc" width="860" height="300"></canvas>
+<div id="out"></div>
+<div id="cap"></div>
+<script>
+// Robot: rectangle 2.4 x 0.6 sliding along y=0 through a wall at x=0
+// with a gap of height 1.0. Configuration = (x, theta).
+const cw=document.getElementById('cw'),cc=document.getElementById('cc');
+const gw=cw.getContext('2d'),gc=cc.getContext('2d');
+const css=v=>getComputedStyle(document.documentElement).getPropertyValue(v).trim();
+const A=1.2,B=0.3,GAP=0.5,WT=0.07; // half-length, half-width, half-gap, half wall thickness
+let q={x:-2.2,t:0}, anim=null, drag=null, grid=null;
+const XMIN=-3,XMAX=3;
+// SAT collision: rect (center x,0 angle t) vs two wall AABBs
+function collide(x,t){
+ const c=Math.cos(t),s=Math.sin(t);
+ // theta=0: long axis VERTICAL (broadside to the wall); theta=90: nose-first
+ const corners=[[B,A],[B,-A],[-B,-A],[-B,A]].map(([u,v])=>[x+u*c-v*s,u*s+v*c]);
+ for(const sign of[1,-1]){ // wall: [-WT,WT] x [GAP, 2.4] (and mirrored)
+  const wy0=sign>0?GAP:-2.4, wy1=sign>0?2.4:-GAP;
+  const wall=[[-WT,wy0],[WT,wy0],[WT,wy1],[-WT,wy1]];
+  // SAT axes: x, y, and rect's two axes
+  const axes=[[1,0],[0,1],[c,s],[-s,c]];
+  let hit=true;
+  for(const[ax,ay]of axes){
+   const p1=corners.map(([px,py])=>px*ax+py*ay);
+   const p2=wall.map(([px,py])=>px*ax+py*ay);
+   if(Math.max(...p1)<=Math.min(...p2)||Math.max(...p2)<=Math.min(...p1)){hit=false;break}}
+  if(hit)return true}
+ return false}
+const NX=160,NT=96;
+function buildGrid(){
+ grid=new Uint8Array(NX*NT);
+ for(let i=0;i<NX;i++){const x=XMIN+(i+0.5)/NX*(XMAX-XMIN);
+  for(let j=0;j<NT;j++){const t=(j+0.5)/NT*Math.PI;
+   grid[i*NT+j]=collide(x,t)?1:0}}}
+const W=860,HW=250,HC=300;
+const WX=v=>W/2+v/(XMAX-XMIN)*W, WY=v=>HW/2-v*(HW/5);
+const CXx=v=>(v-XMIN)/(XMAX-XMIN)*W, CYt=v=>HC-(v/Math.PI)*HC;
+function draw(){
+ const bad=collide(q.x,q.t);
+ gw.clearRect(0,0,W,HW);
+ gw.fillStyle='#64748b';
+ gw.fillRect(WX(-WT),WY(2.4),WX(WT)-WX(-WT),WY(GAP)-WY(2.4));
+ gw.fillRect(WX(-WT),WY(-GAP),WX(WT)-WX(-WT),WY(-2.4)-WY(-GAP));
+ const c=Math.cos(q.t),s=Math.sin(q.t);
+ gw.save();gw.translate(WX(q.x),WY(0));gw.rotate(-q.t);
+ gw.fillStyle=bad?css('--pink'):css('--blue');
+ const sx=W/(XMAX-XMIN);
+ gw.fillRect(-B*sx,-A*sx,2*B*sx,2*A*sx);
+ gw.restore();
+ gw.strokeStyle=css('--border-strong');gw.strokeRect(0.5,0.5,W-1,HW-1);
+ gw.fillStyle=css('--text-muted');gw.font='12px sans-serif';
+ gw.fillText('workspace — a 2.4 × 0.6 robot (broadside at θ = 0°), a 1.0 gap',10,18);
+ // c-space
+ gc.clearRect(0,0,W,HC);
+ const cx=W/NX,ct=HC/NT;
+ gc.fillStyle='#9ca3af';gc.globalAlpha=0.55;
+ for(let i=0;i<NX;i++)for(let j=0;j<NT;j++)if(grid[i*NT+j])
+  gc.fillRect(i*cx,HC-(j+1)*ct,cx+0.5,ct+0.5);
+ gc.globalAlpha=1;
+ gc.strokeStyle=css('--border-strong');gc.strokeRect(0.5,0.5,W-1,HC-1);
+ gc.fillStyle=bad?css('--pink'):css('--green');
+ gc.beginPath();gc.arc(CXx(q.x),CYt(q.t),8,0,7);gc.fill();
+ gc.fillStyle=css('--text-muted');gc.font='12px sans-serif';
+ gc.fillText('C-space: x →, θ ↑ (0° bottom, 180° top) — gray = collision',10,16);
+ document.getElementById('out').innerHTML=
+  `q = (x ${q.x.toFixed(2).replace('-','−')}, θ ${(q.t*180/Math.PI).toFixed(0)}°) — `+
+  (bad?`<b style="color:${css('--pink')}">in collision</b>`:`<b style="color:var(--text-success)">free ✓</b>`);
+ document.getElementById('cap').textContent='At θ = 0° the robot is broadside to the wall — 2.4 long against a 1.0 gap, impassable: the gray C-space obstacle walls off left from right along the bottom edge. The free space connects only through the NECK near θ = 90° (nose-first needs θ > 80.2°, verified): every successful crossing is a path through that neck — the robot must rotate as it passes. A planner that ignores θ sees no way through; the extra dimension is where the solution lives.'}
+function animate(withTurn){
+ if(anim)cancelAnimationFrame(anim);
+ const T=240;let k=0;
+ const step=()=>{const u=k/T;
+  q.x=-2.2+4.4*u;
+  q.t=withTurn?Math.PI/2*Math.max(0,Math.min(1,(2.4-Math.abs(q.x))/0.9)):0;
+  draw();k++;
+  if(k<=T)anim=requestAnimationFrame(step);else anim=null};
+ step()}
+document.getElementById('an').onclick=()=>animate(true);
+document.getElementById('fail').onclick=()=>animate(false);
+function pick(e,cv,h){const r=cv.getBoundingClientRect();
+ return[(e.clientX-r.left)*W/r.width,(e.clientY-r.top)*h/r.height]}
+cw.addEventListener('pointerdown',e=>{if(anim){cancelAnimationFrame(anim);anim=null}
+ drag='w';cw.setPointerCapture(e.pointerId)});
+cw.addEventListener('pointermove',e=>{if(drag!=='w')return;
+ const[px]=pick(e,cw,HW);q.x=Math.max(XMIN,Math.min(XMAX,(px-W/2)*(XMAX-XMIN)/W));draw()});
+cc.addEventListener('pointerdown',e=>{if(anim){cancelAnimationFrame(anim);anim=null}
+ drag='c';cc.setPointerCapture(e.pointerId);
+ const[px,py]=pick(e,cc,HC);q.x=XMIN+px/W*(XMAX-XMIN);q.t=Math.max(0,Math.min(Math.PI,(HC-py)/HC*Math.PI));draw()});
+cc.addEventListener('pointermove',e=>{if(drag!=='c')return;
+ const[px,py]=pick(e,cc,HC);q.x=XMIN+px/W*(XMAX-XMIN);q.t=Math.max(0,Math.min(Math.PI,(HC-py)/HC*Math.PI));draw()});
+addEventListener('pointerup',()=>drag=null);
+matchMedia('(prefers-color-scheme: dark)').addEventListener('change',draw);
+buildGrid();draw();
+const __post=()=>parent.postMessage({demoHeight:document.body.scrollHeight+8},'*');
+addEventListener('load',__post);new ResizeObserver(__post).observe(document.body);
+</script></body></html>

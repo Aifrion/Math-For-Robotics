@@ -1,0 +1,113 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Arm ↔ C-space Explorer</title>
+<style>
+:root{--text-primary:#1f2937;--text-secondary:#4b5563;--text-muted:#9ca3af;--text-success:#15803d;--text-accent:#1d4ed8;--bg-accent:#dbeafe;--border:#e5e7eb;--border-strong:#cbd5e1;--border-accent:#93c5fd;--radius:8px;--bg:#fff;--card:#f9fafb;--blue:#378ADD;--pink:#D4537E;--green:#16a34a;--amber:#BA7517}
+@media (prefers-color-scheme:dark){:root{--text-primary:#e5e7eb;--text-secondary:#cbd5e1;--text-muted:#6b7280;--text-success:#4ade80;--text-accent:#93c5fd;--bg-accent:#1e3a8a;--border:#2f2f2f;--border-strong:#4b5563;--border-accent:#3b82f6;--bg:#191919;--card:#222;--blue:#60a5fa;--pink:#f472b6;--green:#4ade80;--amber:#fbbf24}}
+body{margin:0;padding:12px 16px;background:var(--bg);color:var(--text-primary);font:14px/1.5 -apple-system,Segoe UI,Helvetica,Arial,sans-serif;max-width:900px}
+.btns{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:6px}
+.btns button{font:inherit;font-size:13px;padding:4px 10px;border:0.5px solid var(--border-strong);border-radius:var(--radius);background:transparent;color:var(--text-primary);cursor:pointer}
+.btns button.on{background:var(--bg-accent);color:var(--text-accent);border-color:var(--border-accent)}
+.cv{display:flex;flex-wrap:wrap;gap:10px}
+canvas{flex:1 1 300px;min-width:0;width:100%;height:auto;border-radius:10px;background:var(--card);touch-action:none}
+#out{font-size:13.5px;margin-top:6px;font-variant-numeric:tabular-nums}
+#cap{font-size:13px;color:var(--text-secondary);margin-top:4px;line-height:1.55}
+</style></head><body>
+<div class="btns"><button data-p="0" class="on">obstacle beside the arm</button><button data-p="1">obstacle far out</button><button data-p="2">obstacle near the base</button>
+<span style="font-size:13px;color:var(--text-secondary);align-self:center;margin-left:6px">drag the arm (left) or the dot (right) · drag the gray obstacle</span></div>
+<div class="cv"><canvas id="c1" width="430" height="430"></canvas><canvas id="c2" width="430" height="430"></canvas></div>
+<div id="out"></div>
+<div id="cap"></div>
+<script>
+// Left: workspace with 2-link arm (L1=L2=1) and a disk obstacle.
+// Right: the (alpha,beta) torus with Qobs computed live on a grid.
+const c1=document.getElementById('c1'),c2=document.getElementById('c2');
+const g1=c1.getContext('2d'),g2=c2.getContext('2d');
+const css=v=>getComputedStyle(document.documentElement).getPropertyValue(v).trim();
+let ob={x:0.9,y:0.75,r:0.30}, q={a:2.094,b:-0.349}, drag=null, grid=null;
+const N=86;
+const W=430,S=W/4.6; // workspace scale: 4.6 units across
+const WX=v=>W/2+v*S, WY=v=>W/2-v*S, IWX=p=>(p-W/2)/S, IWY=p=>-(p-W/2)/S;
+const CX=a=>(a+Math.PI)/(2*Math.PI)*W, CY=b=>W-(b+Math.PI)/(2*Math.PI)*W;
+const ICX=p=>p/W*2*Math.PI-Math.PI, ICY=p=>(W-p)/W*2*Math.PI-Math.PI;
+function segHit(px,py,qx,qy){
+ const dx=qx-px,dy=qy-py;
+ const t=Math.max(0,Math.min(1,((ob.x-px)*dx+(ob.y-py)*dy)/Math.max(dx*dx+dy*dy,1e-12)));
+ const cx=px+t*dx-ob.x,cy=py+t*dy-ob.y;
+ return cx*cx+cy*cy<ob.r*ob.r}
+function collides(a,b){
+ const x1=Math.cos(a),y1=Math.sin(a),x2=x1+Math.cos(a+b),y2=y1+Math.sin(a+b);
+ return segHit(0,0,x1,y1)||segHit(x1,y1,x2,y2)}
+function buildGrid(){
+ grid=new Uint8Array(N*N);
+ for(let i=0;i<N;i++){const a=-Math.PI+(i+0.5)/N*2*Math.PI;
+  for(let j=0;j<N;j++){const b=-Math.PI+(j+0.5)/N*2*Math.PI;
+   grid[i*N+j]=collides(a,b)?1:0}}}
+function draw(){
+ const bad=collides(q.a,q.b);
+ // workspace
+ g1.clearRect(0,0,W,W);g1.font='12px sans-serif';
+ g1.strokeStyle=css('--border-strong');g1.strokeRect(0.5,0.5,W-1,W-1);
+ g1.setLineDash([3,4]);g1.strokeStyle=css('--text-muted');g1.beginPath();g1.arc(WX(0),WY(0),2*S,0,7);g1.stroke();g1.setLineDash([]);
+ g1.fillStyle='#9ca3af';g1.beginPath();g1.arc(WX(ob.x),WY(ob.y),ob.r*S,0,7);g1.fill();
+ const x1=Math.cos(q.a),y1=Math.sin(q.a),x2=x1+Math.cos(q.a+q.b),y2=y1+Math.sin(q.a+q.b);
+ g1.strokeStyle=bad?css('--pink'):css('--blue');g1.lineWidth=7;g1.lineCap='round';g1.lineJoin='round';
+ g1.beginPath();g1.moveTo(WX(0),WY(0));g1.lineTo(WX(x1),WY(y1));g1.lineTo(WX(x2),WY(y2));g1.stroke();g1.lineWidth=1;
+ g1.fillStyle=css('--fg')||'#333';
+ g1.fillStyle=css('--text-primary');g1.fillRect(WX(0)-9,WY(0)-4,18,8);
+ g1.beginPath();g1.arc(WX(x1),WY(y1),5,0,7);g1.fillStyle=css('--card');g1.fill();g1.strokeStyle=bad?css('--pink'):css('--blue');g1.lineWidth=2;g1.stroke();g1.lineWidth=1;
+ g1.beginPath();g1.arc(WX(x2),WY(y2),8,0,7);g1.fillStyle=bad?css('--pink'):css('--blue');g1.fill();
+ g1.fillStyle=css('--text-muted');g1.textAlign='left';g1.fillText('workspace',10,18);
+ // c-space
+ g2.clearRect(0,0,W,W);
+ const cell=W/N;
+ g2.fillStyle='#9ca3af';
+ for(let i=0;i<N;i++)for(let j=0;j<N;j++)if(grid[i*N+j]){
+  const a=-Math.PI+(i+0.5)/N*2*Math.PI,b=-Math.PI+(j+0.5)/N*2*Math.PI;
+  g2.globalAlpha=0.55;g2.fillRect(CX(a)-cell/2,CY(b)-cell/2,cell+0.5,cell+0.5)}
+ g2.globalAlpha=1;
+ g2.strokeStyle=css('--border-strong');g2.strokeRect(0.5,0.5,W-1,W-1);
+ g2.strokeStyle=css('--border');g2.beginPath();g2.moveTo(CX(0),0);g2.lineTo(CX(0),W);g2.moveTo(0,CY(0));g2.lineTo(W,CY(0));g2.stroke();
+ g2.fillStyle=bad?css('--pink'):css('--green');g2.beginPath();g2.arc(CX(q.a),CY(q.b),8,0,7);g2.fill();
+ g2.fillStyle=css('--text-muted');g2.font='12px sans-serif';g2.textAlign='left';
+ g2.fillText('C-space (α →, β ↑) — edges wrap (torus)',10,18);
+ g2.fillText('α=−180°',6,W-8);g2.textAlign='right';g2.fillText('α=+180°',W-6,W-8);
+ let frac=0;for(let k=0;k<N*N;k++)frac+=grid[k];frac/=N*N;
+ document.getElementById('out').innerHTML=
+  `q = (α ${(q.a*180/Math.PI).toFixed(0).replace('-','−')}°, β ${(q.b*180/Math.PI).toFixed(0).replace('-','−')}°) — `+
+  (bad?`<b style="color:${css('--pink')}">in collision</b>`:`<b style="color:var(--text-success)">free ✓</b>`)+
+  ` · obstacle blocks <b>${(100*frac).toFixed(1)}%</b> of the torus`;
+ document.getElementById('cap').textContent='The SAME obstacle, seen two ways: a disk in the room (left), a bent blob on the joint-angle torus (right). Drag the gray disk and watch its C-space shadow move and morph — closer to the base, it blocks whole bands of α. Drag the dot off the right edge: it re-enters on the left, because α = ±180° are the same pose. A planner works entirely in the right panel: collision checking there is just "is the point in the gray set".'}
+function pick(e,cv){const r=cv.getBoundingClientRect();
+ return[(e.clientX-r.left)*W/r.width,(e.clientY-r.top)*W/r.height]}
+c1.addEventListener('pointerdown',e=>{const[px,py]=pick(e,c1);
+ const wx=IWX(px),wy=IWY(py);
+ if(Math.hypot(wx-ob.x,wy-ob.y)<ob.r+0.12){drag='ob';c1.setPointerCapture(e.pointerId);return}
+ drag='arm';c1.setPointerCapture(e.pointerId);moveArm(wx,wy)});
+c1.addEventListener('pointermove',e=>{if(!drag)return;const[px,py]=pick(e,c1);
+ const wx=IWX(px),wy=IWY(py);
+ if(drag==='ob'){ob.x=wx;ob.y=wy;buildGrid();draw()}
+ else moveArm(wx,wy)});
+function moveArm(wx,wy){ // simple IK to dragged hand target (elbow-down), clamp reach
+ let r=Math.hypot(wx,wy);const rr=Math.max(0.05,Math.min(1.98,r));
+ const sc=rr/Math.max(r,1e-9);wx*=sc;wy*=sc;
+ const cg=(wx*wx+wy*wy-2)/2;
+ const g=Math.acos(Math.max(-1,Math.min(1,cg)));
+ q.b=g;q.a=Math.atan2(wy,wx)-Math.asin(Math.max(-1,Math.min(1,Math.sin(g)/Math.sqrt(wx*wx+wy*wy))));
+ if(q.a>Math.PI)q.a-=2*Math.PI;if(q.a<-Math.PI)q.a+=2*Math.PI;
+ draw()}
+c2.addEventListener('pointerdown',e=>{drag='q';c2.setPointerCapture(e.pointerId);
+ const[px,py]=pick(e,c2);q.a=ICX(px);q.b=ICY(py);draw()});
+c2.addEventListener('pointermove',e=>{if(drag!=='q')return;const[px,py]=pick(e,c2);
+ q.a=ICX((px%W+W)%W);q.b=ICY((py%W+W)%W);draw()});
+addEventListener('pointerup',()=>drag=null);
+const PRE=[[0.9,0.75,0.30,2.094,-0.349],[1.6,0.4,0.25,2.094,-0.349],[0.55,0.1,0.28,2.4,1.2]];
+document.querySelectorAll('[data-p]').forEach(b=>b.onclick=()=>{
+ document.querySelectorAll('[data-p]').forEach(z=>z.classList.toggle('on',z===b));
+ const[a1,a2,a3,a4,a5]=PRE[+b.dataset.p];
+ ob={x:a1,y:a2,r:a3};q={a:a4,b:a5};buildGrid();draw()});
+matchMedia('(prefers-color-scheme: dark)').addEventListener('change',draw);
+buildGrid();draw();
+const __post=()=>parent.postMessage({demoHeight:document.body.scrollHeight+8},'*');
+addEventListener('load',__post);new ResizeObserver(__post).observe(document.body);
+</script></body></html>
